@@ -1,5 +1,4 @@
 import java.util.Properties
-import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
@@ -7,20 +6,40 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// ---- Signing ----------------------------------------------------------------
-// Debug uses the committed, deterministic app/debug.keystore so every debug APK
-// (locally or in CI) is signed by the SAME key — required for in-app self-update
-// to install over a previous debug build.
-// Release reads credentials from keystore.properties (local) or env vars
-// (CI secrets): RELEASE_STORE_FILE / RELEASE_STORE_PASSWORD /
-// RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD. Release is configured but, per the
-// current plan, not built.
-val keystoreProps = Properties().apply {
+// Release signing: from environment variables (CI) or from keystore.properties
+// in the project root (local builds, never committed). Without either, the
+// release APK is built unsigned.
+val keystoreProperties = Properties().apply {
     val f = rootProject.file("keystore.properties")
-    if (f.exists()) FileInputStream(f).use { load(it) }
+    if (f.exists()) f.inputStream().use { load(it) }
 }
-fun secret(key: String): String? =
-    (keystoreProps.getProperty(key) ?: System.getenv(key))?.takeIf { it.isNotBlank() }
+
+fun signingValue(env: String, prop: String): String? =
+    System.getenv(env)?.takeIf { it.isNotEmpty() } ?: keystoreProperties.getProperty(prop)
+
+val releaseStoreFile = signingValue("PASSKEYCHAIN_KEYSTORE_FILE", "storeFile")
+
+// CI builds get increasing version codes, so a newer APK installs over an older
+// one; the debug app's updater compares this number with the published build.
+val buildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+
+// The version name comes from the git tags: "1.0" for a build of tag v1.0,
+// "1.0-3-gabc1234" for the third commit after it (just the hash before the
+// first tag). CI sets it in the environment; locally git describe is asked.
+fun gitVersionName(): String? = try {
+    val p = ProcessBuilder("git", "describe", "--tags", "--match", "v*", "--always", "--dirty")
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    if (p.waitFor() == 0 && out.isNotEmpty()) out.removePrefix("v") else null
+} catch (e: Exception) {
+    null
+}
+
+val appVersionName = System.getenv("PASSKEYCHAIN_VERSION_NAME")?.takeIf { it.isNotBlank() }
+    ?: gitVersionName()
+    ?: "dev"
 
 android {
     namespace = "it.snel.passkeychain"
@@ -30,51 +49,45 @@ android {
         applicationId = "it.snel.passkeychain"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = buildNumber
+        versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        // Where the app looks for its own updates (see update/UpdateChecker.kt).
-        buildConfigField("String", "UPDATE_REPO", "\"rsnel/passkeychain\"")
         vectorDrawables { useSupportLibrary = true }
     }
 
     signingConfigs {
+        // The committed app/debug.keystore (standard debug credentials): every
+        // debug build, local or CI, has the same signature, so the debug app
+        // can update itself to the newest CI build.
         getByName("debug") {
             storeFile = rootProject.file("app/debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
-        create("release") {
-            val storePath = secret("RELEASE_STORE_FILE")
-            if (storePath != null) {
-                storeFile = file(storePath)
-                storePassword = secret("RELEASE_STORE_PASSWORD")
-                keyAlias = secret("RELEASE_KEY_ALIAS")
-                keyPassword = secret("RELEASE_KEY_PASSWORD")
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = signingValue("PASSKEYCHAIN_KEYSTORE_PASSWORD", "storePassword")
+                keyAlias = signingValue("PASSKEYCHAIN_KEY_ALIAS", "keyAlias")
+                keyPassword = signingValue("PASSKEYCHAIN_KEY_PASSWORD", "keyPassword")
             }
         }
     }
 
     buildTypes {
-        getByName("debug") {
+        debug {
+            // a separate app next to the release ("PassKeyChain debug"), which
+            // updates itself to the newest debug build of main
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-            isDebuggable = true
             signingConfig = signingConfigs.getByName("debug")
-            // Debug builds update from pre-releases tagged debug-v* .
-            buildConfigField("String", "UPDATE_CHANNEL", "\"debug\"")
-            resValue("string", "app_name", "PassKeyChain Debug")
+            resValue("string", "app_name", "PassKeyChain debug")
         }
-        getByName("release") {
+        release {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Only sign release if credentials are present, otherwise leave unsigned.
-            signingConfig = if (secret("RELEASE_STORE_FILE") != null)
-                signingConfigs.getByName("release") else null
-            buildConfigField("String", "UPDATE_CHANNEL", "\"release\"")
             resValue("string", "app_name", "PassKeyChain")
         }
     }

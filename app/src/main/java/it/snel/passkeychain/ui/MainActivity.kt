@@ -19,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import it.snel.passkeychain.BuildConfig
 import it.snel.passkeychain.camera.QrScanActivity
 import it.snel.passkeychain.hybrid.FidoQr
 import it.snel.passkeychain.io.KeePassXc
@@ -142,7 +141,7 @@ private fun MainScreen(store: PasskeyStore) {
     }
 
     updateDialog?.let { status ->
-        UpdateDialog(status, onDismiss = { updateDialog = null }, onInstall = { rel ->
+        UpdateDialog(status, UpdateChecker(ctx).currentLabel, onDismiss = { updateDialog = null }, onInstall = { rel ->
             scope.launch {
                 runCatching { UpdateChecker(ctx).downloadAndInstall(rel) }
                     .onFailure { snackbar.showSnackbar("Update failed: ${it.message}") }
@@ -192,10 +191,10 @@ private fun PasskeyRow(pk: Passkey, onDelete: () -> Unit) {
 }
 
 @Composable
-private fun UpdateDialog(status: UpdateChecker.Status, onDismiss: () -> Unit, onInstall: (UpdateChecker.Release) -> Unit) {
+private fun UpdateDialog(status: UpdateChecker.Status, current: String, onDismiss: () -> Unit, onInstall: (UpdateChecker.Release) -> Unit) {
     val (title, body, rel) = when (status) {
-        is UpdateChecker.Status.UpToDate -> Triple("Up to date", "You are on the latest ${BuildConfig.UPDATE_CHANNEL} build (${BuildConfig.VERSION_NAME}).", null)
-        is UpdateChecker.Status.Available -> Triple("Update available", status.release.notes.ifBlank { status.release.tag }, status.release)
+        is UpdateChecker.Status.UpToDate -> Triple("Up to date", "You have the newest version: $current.", null)
+        is UpdateChecker.Status.Available -> Triple("Update available", "${status.release.label} is available (you have $current).", status.release)
         is UpdateChecker.Status.Error -> Triple("Update check failed", status.message, null)
     }
     AlertDialog(

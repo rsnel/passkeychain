@@ -1,66 +1,188 @@
-name: Build
+name: Build APK
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'debug-v*', 'v*' ]
   pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 permissions:
-  contents: write   # needed to create a Release on a tag
+  contents: write # the rolling 'debug' pre-release, releases on v* tags
 
+# Every build is the debug app; a push to main publishes it as the rolling
+# pre-release 'debug', which the debug app updates from. Only a v* tag (none
+# yet) builds the signed release and publishes it as a GitHub release.
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    outputs:
+      docs: ${{ steps.docs.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # tags and history, for git describe
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      # version name from the tags: 1.0 on tag v1.0, 1.0-3-gabc1234 after it
+      # (just the commit hash while there is no v* tag yet)
+      - name: Version name
+        run: |
+          v=$(git describe --tags --match 'v*' --always)
+          echo "PASSKEYCHAIN_VERSION_NAME=${v#v}" >> "$GITHUB_ENV"
+          echo "::notice title=Version::${v#v} (build $GITHUB_RUN_NUMBER)"
+
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: 17
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
 
-      - name: Install SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('**/*.gradle*', 'gradle/wrapper/gradle-wrapper.properties') }}
-
-      - name: Unit tests (re-verifies the crypto core)
-        run: ./gradlew --no-daemon testDebugUnitTest
-
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug
-
-      - name: Stage APK
+      # Only for v* tags. Repository secrets: KEYSTORE_BASE64,
+      # KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD. Debug builds always use
+      # the committed app/debug.keystore.
+      - name: Set up release signing
+        if: env.IS_RELEASE == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk "out/passkeychain-${GITHUB_REF_NAME//\//-}-debug.apk"
-          ls -l out
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No signing secrets, release APK will be unsigned"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "PASSKEYCHAIN_KEYSTORE_FILE=$RUNNER_TEMP/release.jks"
+            echo "PASSKEYCHAIN_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "PASSKEYCHAIN_KEY_ALIAS=$KEY_ALIAS"
+            echo "PASSKEYCHAIN_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      # the unit tests (which re-verify the crypto core) run against debug
+      - name: Unit tests and APK
+        run: |
+          if [ "$IS_RELEASE" = true ]; then
+            ./gradlew --no-daemon testDebugUnitTest assembleRelease
+          else
+            ./gradlew --no-daemon testDebugUnitTest assembleDebug
+          fi
+
+      - name: Show signing certificates
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          for apk in app/build/outputs/apk/*/*.apk; do
+            name=$(basename "$apk")
+            if cert=$("$apksigner" verify --print-certs "$apk" 2>/dev/null | grep -m1 'SHA-256'); then
+              echo "::notice title=$name::$cert"
+            else
+              echo "::notice title=$name::not signed"
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: env.IS_RELEASE != 'true'
         with:
           name: passkeychain-debug-apk
-          path: out/*.apk
+          path: app/build/outputs/apk/debug/*.apk
 
-      # On a debug-v*/v* tag, publish a Release so the app's self-updater finds it.
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
+        if: env.IS_RELEASE == 'true'
         with:
-          prerelease: ${{ startsWith(github.ref_name, 'debug-') }}
-          name: ${{ github.ref_name }}
-          files: out/*.apk
-          generate_release_notes: true
+          name: passkeychain-release-apk
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Publish release for v* tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$apk" ]; then
+            echo "::error::Signed release APK missing; add the signing secrets before tagging"
+            exit 1
+          fi
+          cp "$apk" "passkeychain-$GITHUB_REF_NAME.apk"
+          gh release create "$GITHUB_REF_NAME" "passkeychain-$GITHUB_REF_NAME.apk" --generate-notes
+
+      # The pre-release 'debug' always holds the newest debug build of main:
+      # passkeychain-debug.apk and passkeychain-debug.json, which the debug
+      # app reads. A pre-release is never 'latest', so release apps ignore it.
+      - name: Publish debug build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # a run that finishes after a newer one must not overwrite it
+          if gh release download debug -p passkeychain-debug.json -O published.json 2>/dev/null; then
+            published=$(python3 -c "import json; print(json.load(open('published.json'))['build'])")
+            if [ "$published" -ge "$GITHUB_RUN_NUMBER" ]; then
+              echo "Build $published is already published, skipping build $GITHUB_RUN_NUMBER"
+              exit 0
+            fi
+          fi
+          cp app/build/outputs/apk/debug/app-debug.apk passkeychain-debug.apk
+          printf '{"version": "%s", "build": %s, "commit": "%s"}\n' \
+            "$PASSKEYCHAIN_VERSION_NAME" "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" > passkeychain-debug.json
+          # pushes with the workflow token start no new run
+          git tag -f debug "$GITHUB_SHA"
+          git push -f origin refs/tags/debug
+          notes="Newest debug build of main: $PASSKEYCHAIN_VERSION_NAME (build $GITHUB_RUN_NUMBER). Installs as a separate app, 'PassKeyChain debug'."
+          if ! gh release view debug >/dev/null 2>&1; then
+            gh release create debug --prerelease --latest=false --title "Debug build" --notes "$notes" --verify-tag
+          fi
+          # the APK first: the app only looks for it after reading the JSON
+          gh release upload debug passkeychain-debug.apk --clobber
+          gh release upload debug passkeychain-debug.json --clobber
+          gh release edit debug --prerelease --latest=false --notes "$notes"
+          echo "::notice title=Debug build::$PASSKEYCHAIN_VERSION_NAME (build $GITHUB_RUN_NUMBER) published"
+
+      # Publish the site only when docs/ changed in the pushed commits.
+      # A manual run always publishes.
+      - name: Did docs/ change?
+        id: docs
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          changed=false
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            changed=true
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
+            changed=true
+          elif ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            changed=true
+          elif [ -n "$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- docs)" ]; then
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "docs/ changed: $changed"
+
+      - name: Clean up keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+  # GitHub Pages, source "GitHub Actions": one deployment per change of docs/
+  pages:
+    needs: build
+    if: needs.build.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deploy
+        uses: actions/deploy-pages@v4

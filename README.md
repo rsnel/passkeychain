@@ -48,35 +48,29 @@ No Android Studio needed for a debug build:
 Requirements: JDK 17, Android SDK (platform 35, build-tools 35). CI
 (`.github/workflows/build.yml`) does exactly this on every push.
 
-## Signing
+## Builds, signing & self-update
 
-- **Debug** uses the committed, deterministic `app/debug.keystore` (standard
-  `android`/`androiddebugkey` creds). It is intentionally in the repo so every
-  debug build — local or CI — shares one signature, which is required for the
-  in-app updater to replace a previous debug install.
-- **Release** reads credentials from `keystore.properties` (copy
-  `keystore.properties.example`) or the environment / CI secrets
-  `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
-  `RELEASE_KEY_PASSWORD`. Release is configured but **not built yet**.
+Works like Kaartscan:
 
-## Releases & self-update
+- **Every CI build is a debug build** (push or pull request): unit tests +
+  `assembleDebug`, APK uploaded as a run artifact.
+- **A push to `main`** also replaces the rolling pre-release
+  [`debug`](https://github.com/rsnel/passkeychain/releases/tag/debug) with
+  `passkeychain-debug.apk` and `passkeychain-debug.json`
+  (`{"version", "build", "commit"}`). No per-build tags.
+- The **debug app** (`it.snel.passkeychain.debug`, "PassKeyChain debug")
+  reads that JSON and offers the APK when its `build` (the CI run number, also
+  the APK's `versionCode`) is newer than its own.
+- Version names come from `git describe --tags --match 'v*'` (just the commit
+  hash until a `v*` tag exists).
+- Debug builds are signed with the committed `app/debug.keystore` (standard
+  debug credentials), so every debug build installs over the previous one.
 
-The app only looks at **its own channel**:
-
-| Build   | Tag pattern        | Release type |
-|---------|--------------------|--------------|
-| debug   | `debug-v<name>+<code>` | pre-release |
-| release | `v<name>+<code>`       | release     |
-
-The trailing `+<code>` is the Android `versionCode`; the updater installs a
-release whose code is higher than the running one. Cut a debug build for the
-updater like:
-
-```bash
-git tag debug-v0.1.0+1 && git push origin debug-v0.1.0+1
-```
-
-CI builds the APK and publishes it to that release automatically.
+Release builds are prepared but not used yet: pushing a `v*` tag would build
+`assembleRelease`, signed via the repository secrets `KEYSTORE_BASE64`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` (locally: copy
+`keystore.properties.example` to `keystore.properties`), and publish it as a
+GitHub release that the release app follows via `/releases/latest`.
 
 ## Import format
 
@@ -111,4 +105,5 @@ app/src/main/java/it/snel/passkeychain/
 
 ## License
 
-Not yet chosen — add one (e.g. MIT or GPL-3.0) before publishing widely.
+PassKeyChain is free software, licensed under the
+[GNU General Public License v3.0](LICENSE).
