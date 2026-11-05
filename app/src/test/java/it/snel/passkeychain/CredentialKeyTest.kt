@@ -104,10 +104,10 @@ class CredentialKeyTest {
     }
 
     @Test fun fidoQrParsesSyntheticPayload() {
-        // Build a minimal FIDO hybrid QR: map{0:pub33,1:secret16,2:0,3:now,5:"ga"}
+        // Shaped like a real Microsoft sign-in QR: map{0:pub33,1:secret16,2:2,3:time,4:false,5:"ga"}
         val pub = ByteArray(33) { 0x02 }
         val secret = ByteArray(16) { it.toByte() }
-        val m = linkedMapOf<Any, Any>(0 to pub, 1 to secret, 2 to 2, 3 to 1_700_000_000L, 5 to "ga")
+        val m = linkedMapOf<Any, Any>(0 to pub, 1 to secret, 2 to 2, 3 to 1_793_688_129L, 4 to false, 5 to "ga")
         val payload = Cbor.encode(m)
         val qr = "FIDO:/" + bytesToDigits(payload)
         assertTrue(FidoQr.isFidoQr(qr))

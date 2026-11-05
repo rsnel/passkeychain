@@ -18,6 +18,8 @@ object Cbor {
 
     private fun write(o: ByteArrayOutputStream, v: Any?) {
         when (v) {
+            null -> o.write(0xF6)
+            is Boolean -> o.write(if (v) 0xF5 else 0xF4)
             is Int -> writeLong(o, v.toLong())
             is Long -> writeLong(o, v)
             is ByteArray -> { typeLen(o, 2, v.size.toLong()); o.write(v) }
@@ -67,7 +69,30 @@ object Cbor {
                 3 -> String(b, pos, len.toInt(), Charsets.UTF_8).also { pos += len.toInt() }
                 4 -> (0 until len).map { decode() }
                 5 -> LinkedHashMap<Any?, Any?>().apply { repeat(len.toInt()) { put(decode(), decode()) } }
-                else -> throw IllegalArgumentException("unsupported CBOR major $major")
+                6 -> decode() // tag: return the tagged item itself
+                else -> simple(info, len)
+            }
+        }
+
+        /** Major type 7: simple values and floats (the length bits are the raw value). */
+        private fun simple(info: Int, raw: Long): Any? = when (info) {
+            20 -> false
+            21 -> true
+            22, 23 -> null // null, undefined
+            25 -> halfToDouble(raw.toInt())
+            26 -> Float.fromBits(raw.toInt()).toDouble()
+            27 -> Double.fromBits(raw)
+            else -> throw IllegalArgumentException("unsupported CBOR simple value $info")
+        }
+
+        private fun halfToDouble(h: Int): Double {
+            val sign = if (h and 0x8000 != 0) -1.0 else 1.0
+            val exp = (h shr 10) and 0x1F
+            val mant = h and 0x3FF
+            return sign * when (exp) {
+                0 -> Math.scalb(mant.toDouble(), -24)
+                31 -> if (mant == 0) Double.POSITIVE_INFINITY else Double.NaN
+                else -> Math.scalb((mant + 1024).toDouble(), exp - 25)
             }
         }
         private fun readLen(info: Int): Long = when (info) {
