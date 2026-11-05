@@ -82,17 +82,29 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
-        if: env.IS_RELEASE != 'true'
-        with:
-          name: passkeychain-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+      # A plain .apk (not zipped), downloadable straight from the run page
+      - name: Name the APK
+        run: |
+          if [ "$IS_RELEASE" = true ]; then
+            cp app/build/outputs/apk/release/app-release.apk "passkeychain-$GITHUB_REF_NAME.apk" 2>/dev/null \
+              || cp app/build/outputs/apk/release/app-release-unsigned.apk "passkeychain-$GITHUB_REF_NAME.apk"
+            echo "APK_FILE=passkeychain-$GITHUB_REF_NAME.apk" >> "$GITHUB_ENV"
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk passkeychain-debug.apk
+            echo "APK_FILE=passkeychain-debug.apk" >> "$GITHUB_ENV"
+          fi
 
-      - uses: actions/upload-artifact@v4
-        if: env.IS_RELEASE == 'true'
+      - uses: actions/upload-artifact@v7
+        id: apk
         with:
-          name: passkeychain-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: ${{ env.APK_FILE }}
+          path: ${{ env.APK_FILE }}
+          archive: false
+
+      - name: Download link
+        run: |
+          printf '### APK\n\n[%s](%s) (sign in to GitHub to download)\n' \
+            "$APK_FILE" "${{ steps.apk.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish release for v* tags
         if: startsWith(github.ref, 'refs/tags/v')
@@ -104,7 +116,6 @@ jobs:
             echo "::error::Signed release APK missing; add the signing secrets before tagging"
             exit 1
           fi
-          cp "$apk" "passkeychain-$GITHUB_REF_NAME.apk"
           gh release create "$GITHUB_REF_NAME" "passkeychain-$GITHUB_REF_NAME.apk" --generate-notes
 
       # The pre-release 'debug' always holds the newest debug build of main:
@@ -123,7 +134,6 @@ jobs:
               exit 0
             fi
           fi
-          cp app/build/outputs/apk/debug/app-debug.apk passkeychain-debug.apk
           printf '{"version": "%s", "build": %s, "commit": "%s"}\n' \
             "$PASSKEYCHAIN_VERSION_NAME" "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" > passkeychain-debug.json
           # pushes with the workflow token start no new run
