@@ -33,3 +33,11 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Keep the deterministic debug keystore (safe to publish; standard debug creds)
+!app/debug.keystore
+
+# But never the real release keystore or secrets
+keystore.properties
+release.keystore
+*.keystore.base64

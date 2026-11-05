@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PassKeyChain — import, store &amp; use your passkeys on Android</title>
+<meta name="description" content="An open-source Android app that imports FIDO2 passkeys (KeePassXC JSON), stores them in Android Keystore-encrypted storage, signs in-device logins as a passkey provider, and answers cross-device QR sign-ins.">
+<meta name="theme-color" content="#4F46E5">
+<link rel="icon" href="assets/favicon.png" type="image/png">
+<style>
+  :root{
+    --indigo:#4F46E5; --indigo-2:#6366F1; --indigo-d:#312E81;
+    --gold:#F2B705; --ink:#14121F; --muted:#6b6880;
+    --bg:#ffffff; --fg:#1a1830; --card:#ffffff; --line:#ECEAF6; --soft:#F6F6FB;
+    --maxw:1080px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f0e16; --fg:#ece9fb; --muted:#a7a3c2; --card:#1a1826; --line:#2a2740; --soft:#141222; }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--indigo-2)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:999px;font-weight:600;text-decoration:none;border:1px solid transparent}
+  .btn-primary{background:var(--indigo);color:#fff}
+  .btn-primary:hover{background:#4338ca}
+  .btn-ghost{background:transparent;color:var(--fg);border-color:var(--line)}
+  .btn-ghost:hover{border-color:var(--indigo-2)}
+
+  /* hero */
+  header.hero{background:radial-gradient(1200px 500px at 25% -10%, var(--indigo-2), var(--indigo) 55%, var(--indigo-d));color:#fff;padding:72px 0 64px}
+  .hero-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:40px;align-items:center}
+  .hero h1{font-size:clamp(34px,5vw,52px);line-height:1.05;margin:0 0 14px;font-weight:800;letter-spacing:-.5px}
+  .hero p.lede{font-size:19px;color:#dcd9ff;margin:0 0 28px;max-width:46ch}
+  .hero .logo{width:180px;height:180px;margin:0 auto;display:block;filter:drop-shadow(0 18px 40px rgba(0,0,0,.35))}
+  .cta{display:flex;gap:12px;flex-wrap:wrap}
+  .pills{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+  .pill{font-size:13px;background:#ffffff1a;border:1px solid #ffffff2e;color:#eceaff;padding:5px 12px;border-radius:999px}
+
+  section{padding:64px 0}
+  h2{font-size:clamp(24px,3.2vw,34px);font-weight:800;letter-spacing:-.3px;margin:0 0 8px}
+  .sub{color:var(--muted);margin:0 0 36px;font-size:17px}
+
+  .features{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px}
+  .card h3{margin:14px 0 6px;font-size:18px}
+  .card p{margin:0;color:var(--muted);font-size:15px}
+  .ic{width:42px;height:42px;border-radius:12px;background:linear-gradient(180deg,#eef0ff,#e5e8ff);display:flex;align-items:center;justify-content:center}
+  @media (prefers-color-scheme: dark){ .ic{background:#241f3d} }
+
+  .shots{background:var(--soft)}
+  .shot-row{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;align-items:start}
+  .shot img{width:100%;height:auto;display:block}
+  .shot p{text-align:center;color:var(--muted);font-size:14px;margin:10px 0 0}
+
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;counter-reset:s}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;position:relative}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;top:-14px;left:22px;width:30px;height:30px;border-radius:999px;background:var(--gold);color:var(--ink);font-weight:800;display:flex;align-items:center;justify-content:center}
+  .step h3{margin:8px 0 6px}
+  .step p{margin:0;color:var(--muted);font-size:15px}
+
+  .status{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .box{border:1px solid var(--line);border-radius:18px;padding:22px;background:var(--card)}
+  .box.good{border-left:4px solid #2ecc71}
+  .box.wip{border-left:4px solid var(--gold)}
+  .box h3{margin:0 0 12px}
+  .box ul{margin:0;padding-left:18px;color:var(--muted)}
+  .box li{margin:6px 0}
+
+  .note{background:var(--soft);border:1px dashed var(--line);border-radius:16px;padding:18px 20px;color:var(--muted);font-size:14.5px}
+  code{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:.92em}
+  footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-size:14px}
+  footer a{color:var(--muted)}
+
+  @media (max-width:860px){
+    .hero-grid,.features,.shot-row,.steps,.status{grid-template-columns:1fr}
+    .hero .logo{width:130px;height:130px}
+    .hero-media{order:-1}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <h1>Your passkeys.<br>Your device.<br>Your keys.</h1>
+      <p class="lede">PassKeyChain imports FIDO2 passkeys from a KeePassXC export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and uses them to sign in — on the phone, or across devices by scanning a sign-in QR.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/rsnel/passkeychain/releases">⬇ Download debug APK</a>
+        <a class="btn btn-ghost" href="https://github.com/rsnel/passkeychain">View source on GitHub</a>
+      </div>
+      <div class="pills">
+        <span class="pill">Open source</span>
+        <span class="pill">Android 9+ (API 28)</span>
+        <span class="pill">Keystore-encrypted</span>
+        <span class="pill">Import &amp; export</span>
+        <span class="pill">Self-updating</span>
+      </div>
+    </div>
+    <div class="hero-media">
+      <img class="logo" src="assets/logo.png" alt="PassKeyChain logo — a gold key with a keyhole on an indigo field">
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="sub">A self-hosted passkey manager — you hold the keys, not a cloud vendor.</p>
+    <div class="features">
+      <div class="card">
+        <div class="ic">🔑</div>
+        <h3>Import passkeys</h3>
+        <p>Reads KeePassXC passkey exports (<code>fido2Credentials</code> JSON). The parser is tolerant of PEM, base64 PKCS#8, or raw-scalar key encodings.</p>
+      </div>
+      <div class="card">
+        <div class="ic">🛡️</div>
+        <h3>Encrypted at rest</h3>
+        <p>Credentials are sealed with an AES-256-GCM key held in the Android Keystore — hardware-backed / StrongBox where the device supports it.</p>
+      </div>
+      <div class="card">
+        <div class="ic">📲</div>
+        <h3>On-device sign-in</h3>
+        <p>Registers as a system <strong>passkey provider</strong> (Android 14+), so imported keys are offered when you log in to sites and apps on the phone.</p>
+      </div>
+      <div class="card">
+        <div class="ic">🔗</div>
+        <h3>Cross-device QR</h3>
+        <p>Scans the <code>FIDO:/</code> hybrid QR shown by a desktop sign-in page and signs the assertion with your imported key.</p>
+      </div>
+      <div class="card">
+        <div class="ic">📤</div>
+        <h3>Export anytime</h3>
+        <p>Export back to the KeePassXC-compatible format. No lock-in — your credentials move with you.</p>
+      </div>
+      <div class="card">
+        <div class="ic">⬆️</div>
+        <h3>Self-updating</h3>
+        <p>Checks GitHub Releases on its own channel (debug / release) and installs the next build — debug never mixes with release signatures.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="shots">
+  <div class="wrap">
+    <h2>A look at the app</h2>
+    <p class="sub">Design renderings of the current build.</p>
+    <div class="shot-row">
+      <div class="shot"><img src="assets/screen_home.png" alt="Home screen listing imported passkeys"><p>Your imported passkeys, encrypted at rest.</p></div>
+      <div class="shot"><img src="assets/screen_scan.png" alt="Camera scanning a FIDO hybrid QR code"><p>Scan a desktop sign-in QR.</p></div>
+      <div class="shot"><img src="assets/screen_import.png" alt="Empty state with the import menu open"><p>Import a KeePassXC export to begin.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="sub">Three steps, no account, no server.</p>
+    <div class="steps">
+      <div class="step">
+        <h3>Import</h3>
+        <p>Export your passkeys from KeePassXC to JSON, then open it in PassKeyChain. Keys are normalised and encrypted into Keystore-backed storage.</p>
+      </div>
+      <div class="step">
+        <h3>Sign in</h3>
+        <p>On the phone, pick PassKeyChain from the system passkey sheet. On another device, tap <em>Scan QR</em> and point at the sign-in page’s QR.</p>
+      </div>
+      <div class="step">
+        <h3>Stay current</h3>
+        <p>The app watches its GitHub Releases channel and offers the next build in-place. Export whenever you want a backup.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="shots">
+  <div class="wrap">
+    <h2>Project status — honestly</h2>
+    <p class="sub">Built to be verifiable; the hard cross-device bits are a work in progress.</p>
+    <div class="status">
+      <div class="box good">
+        <h3>✅ Working &amp; unit-tested</h3>
+        <ul>
+          <li>KeePassXC import / export round-trip</li>
+          <li>P-256 key decoding across encodings</li>
+          <li>WebAuthn ES256 assertion signing</li>
+          <li>FIDO <code>FIDO:/</code> QR decoding</li>
+          <li>Keystore-encrypted storage, Compose UI</li>
+          <li>Self-update channel logic</li>
+        </ul>
+      </div>
+      <div class="box wip">
+        <h3>🚧 In progress (needs a device)</h3>
+        <ul>
+          <li>The hybrid/caBLE <strong>BLE proximity</strong> advertisement</li>
+          <li>The Noise-encrypted relay <strong>tunnel</strong></li>
+          <li>End-to-end sign-in against live Microsoft login</li>
+        </ul>
+        <p style="color:var(--muted);font-size:14px;margin:12px 0 0">The deterministic crypto for the hybrid flow is implemented and tested; the radio/network stages fail loudly rather than pretend to work. See <code>hybrid/HybridTransport.kt</code>.</p>
+      </div>
+    </div>
+    <p class="note" style="margin-top:22px">🔒 <strong>Security &amp; scope.</strong> PassKeyChain manages credentials <em>you already own</em>. Private keys never leave your device; there is no server and no telemetry. Passkey portability follows the FIDO Alliance Credential Exchange direction (2025). Treat exports like you would any password-vault backup.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>PassKeyChain · open source on <a href="https://github.com/rsnel/passkeychain">github.com/rsnel/passkeychain</a> · built for Android.<br>
+    Not affiliated with Microsoft, Google, KeePassXC, or the FIDO Alliance.</p>
+  </div>
+</footer>
+
+</body>
+</html>

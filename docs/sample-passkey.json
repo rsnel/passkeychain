@@ -1,0 +1,19 @@
+{
+  "fido2Credentials": [
+    {
+      "credentialId": "nTtiNx1qeVf82KxT5GcvCA==",
+      "keyType": "public-key",
+      "keyAlgorithm": "ECDSA",
+      "keyCurve": "P-256",
+      "keyValue": "-----BEGIN PRIVATE KEY-----\nMEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCB8MPc0Eb51UK1xeL1o\nnbsAUFqoA8UHRnVi5sW+N+GUYg==\n-----END PRIVATE KEY-----\n",
+      "rpId": "login.microsoft.com",
+      "rpName": "Microsoft",
+      "userHandle": "KC19TNgEhDMh9gVwHWd1/A==",
+      "userName": "demo@example.com",
+      "userDisplayName": "Demo User",
+      "counter": "0",
+      "discoverable": "true",
+      "creationDate": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
