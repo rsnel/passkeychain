@@ -87,7 +87,11 @@ class HybridTransport(
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 0, 10)
         
-        // The remaining 6 bytes (routing ID, tunnel ID, zeros) stay zero for now
+        // kRoutingIdSize = 3 bytes (bytes 10-12). Set to zero for now.
+        // Tunnel server ID (bytes 13-15). 0 = cable.ua5v.com per Chromium.
+        plaintextEid[13] = 0
+        plaintextEid[14] = 0
+        plaintextEid[15] = 0
         
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
