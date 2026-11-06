@@ -283,6 +283,23 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             noise.mixHash(ePubI)
             Log.d(TAG, "after MixHash(e_pub_i) h = ${hex(noise.h)}")
 
+            // Chromium's initiator also MixKey(e_pub_i) and MixKey(es) before
+            // encrypting tag1, even though the Noise NKpsk0 pattern only
+            // specifies MixHash(e_pub) for the 'e' token. Match that.
+            noise.mixKey(ePubI)
+            Log.d(TAG, "after MixKey(e_pub_i) ck = ${hex(noise.ck)}")
+            Log.d(TAG, "after MixKey(e_pub_i) k  = ${hex(noise.k)}")
+
+            val staticPrivBytes = STATIC_RESPONDER_PRIV
+                ?: throw HybridTransport.DeviceStageMissing("STATIC_RESPONDER_PRIV not set")
+            val staticPriv = KeyFactory.getInstance("EC")
+                .generatePrivate(java.security.spec.PKCS8EncodedKeySpec(staticPrivBytes)) as ECPrivateKey
+            val es = ecdh(staticPriv, ePubI)
+            Log.d(TAG, "es = ${hex(es)}")
+            noise.mixKey(es)
+            Log.d(TAG, "after MixKey(es) ck = ${hex(noise.ck)}")
+            Log.d(TAG, "after MixKey(es) k  = ${hex(noise.k)}")
+
             val pt1 = noise.decryptAndHash(tag1)
             Log.d(TAG, "msg1 plaintext = ${hex(pt1)} (expected empty)")
 
@@ -367,6 +384,9 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         // Set by HybridTransport before calling receive(). Ugly but pragmatic for now.
         @Volatile var STATIC_PEER_IDENTITY: ByteArray = ByteArray(65)
         @Volatile var STATIC_PSK: ByteArray = ByteArray(32)
+        // Responder's static P-256 private key, PKCS#8 DER. Used for the es DH
+        // in msg1. Its public half is what the QR carries as peerPublicKey.
+        @Volatile var STATIC_RESPONDER_PRIV: ByteArray? = null
 
         private fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
 

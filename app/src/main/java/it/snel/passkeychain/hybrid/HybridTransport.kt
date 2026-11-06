@@ -109,6 +109,14 @@ class HybridTransport(
         val peer65 = it.snel.passkeychain.hybrid.NoiseTunnelClient.decompressPeerIdentity(qr.peerPublicKey)
         it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PEER_IDENTITY = peer65
 
+        // Responder's static keypair. Its public half is the QR's peerPublicKey;
+        // the private half is derived from qrSecret so both sides agree. Best-guess
+        // info label [4,0,0,0]; the next handshake run will confirm whether the
+        // es DH succeeds, by whether msg1 decrypts.
+        val staticPrivSeed = hkdf(qr.qrSecret, salt, byteArrayOf(4, 0, 0, 0), 32)
+        val staticPrivPkcs8 = p256PrivateKeyFromScalar(staticPrivSeed)
+        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_RESPONDER_PRIV = staticPrivPkcs8
+
         val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
         val routingId = newTunnel.routingId
 
@@ -160,6 +168,18 @@ class HybridTransport(
     private fun b64urlToBytes(s: String): ByteArray = it.snel.passkeychain.util.B64.dUrl(s)
 
     companion object {
+        /** Derive a P-256 private key (PKCS#8 DER) from a 32-byte scalar. */
+        fun p256PrivateKeyFromScalar(scalar: ByteArray): ByteArray {
+            require(scalar.size == 32) { "scalar must be 32 bytes" }
+            val params = java.security.AlgorithmParameters.getInstance("EC")
+                .apply { init(java.security.spec.ECGenParameterSpec("secp256r1")) }
+                .getParameterSpec(java.security.spec.ECParameterSpec::class.java)
+            val d = java.math.BigInteger(1, scalar)
+            val priv = java.security.KeyFactory.getInstance("EC")
+                .generatePrivate(java.security.spec.ECPrivateKeySpec(d, params))
+            return priv.encoded
+        }
+
         fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
             val mac = Mac.getInstance("HmacSHA256")
             mac.init(SecretKeySpec(if (salt.isEmpty()) ByteArray(32) else salt, "HmacSHA256"))
