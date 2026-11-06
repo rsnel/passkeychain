@@ -45,6 +45,8 @@ class AndroidBleAdvertiser(private val context: Context) : HybridTransport.BleAd
             .setIncludeTxPowerLevel(false)
             .build()
 
+        val hexString = payload.joinToString("") { String.format("%02X", it) }
+        Log.d(TAG, "Advertising payload hex: $hexString")
         Log.d(TAG, "Starting BLE advertisement with UUID $serviceUuid and ${payload.size} bytes")
         
         advertiser?.startAdvertising(settings, data, object : AdvertiseCallback() {
