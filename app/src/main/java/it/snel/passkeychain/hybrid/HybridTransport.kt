@@ -82,12 +82,12 @@ class HybridTransport(
     private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
         val plaintextEid = ByteArray(16)
         
-        // Chromium commit: v2 EIDs encrypt an 8-byte nonce with 8 zero bytes.
+        // 8-byte nonce
         val nonce = ByteArray(8)
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 0, 8)
         
-        // Bytes 8-15 remain zero (initialized by ByteArray(16))
+        // Bytes 8-15 are zero (already initialized to 0)
         
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
@@ -95,7 +95,7 @@ class HybridTransport(
         
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
-        val hmac = mac.doFinal(ciphertext)
+        val hmac = mac.doFinal(plaintextEid) // HMAC over plaintext!
         
         // Return: 16-byte ciphertext + first 4 bytes of HMAC (Total 20 bytes)
         return ciphertext + hmac.copyOfRange(0, 4)
