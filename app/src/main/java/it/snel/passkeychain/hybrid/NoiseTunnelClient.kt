@@ -41,7 +41,7 @@ import javax.crypto.spec.SecretKeySpec
 class NoiseTunnelClient : HybridTransport.TunnelClient {
 
     private val TAG = "NoiseTunnelClient"
-    private val PROTOCOL_NAME = "Noise_NKpsk0_P256_AESGCM_SHA256"
+    private val PROTOCOL_NAME = "Noise_KNpsk0_P256_AESGCM_SHA256"
 
     override fun connectNewTunnel(tunnelUrl: String): HybridTransport.TunnelClient.NewTunnel {
         Log.d(TAG, "Connecting to $tunnelUrl")
@@ -147,8 +147,8 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
             // NKpsk0 responder uses prologue = 0x00 (Chromium RespondToHandshake,
             // kNKpsk0 branch). The NKpsk0 branch uses 0x01.
-            mixHash(byteArrayOf(0x00))
-            Log.d(TAG, "after MixHash([0x00]) h = ${hex(h)}")
+            mixHash(byteArrayOf(0x01))
+            Log.d(TAG, "after MixHash([0x01]) h = ${hex(h)}")
 
             // MixHash(peerIdentity65)
             mixHash(peerIdentity65)
