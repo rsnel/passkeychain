@@ -283,23 +283,11 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             noise.mixHash(ePubI)
             Log.d(TAG, "after MixHash(e_pub_i) h = ${hex(noise.h)}")
 
-            // Chromium's initiator also MixKey(e_pub_i) and MixKey(es) before
-            // encrypting tag1, even though the Noise NKpsk0 pattern only
-            // specifies MixHash(e_pub) for the 'e' token. Match that.
-            noise.mixKey(ePubI)
-            Log.d(TAG, "after MixKey(e_pub_i) ck = ${hex(noise.ck)}")
-            Log.d(TAG, "after MixKey(e_pub_i) k  = ${hex(noise.k)}")
-
-            val staticPrivBytes = STATIC_RESPONDER_PRIV
-                ?: throw HybridTransport.DeviceStageMissing("STATIC_RESPONDER_PRIV not set")
-            val staticPriv = KeyFactory.getInstance("EC")
-                .generatePrivate(java.security.spec.PKCS8EncodedKeySpec(staticPrivBytes)) as ECPrivateKey
-            val es = ecdh(staticPriv, ePubI)
-            Log.d(TAG, "es = ${hex(es)}")
-            noise.mixKey(es)
-            Log.d(TAG, "after MixKey(es) ck = ${hex(noise.ck)}")
-            Log.d(TAG, "after MixKey(es) k  = ${hex(noise.k)}")
-
+            // Per the FIDO KNpsk0 reference implementation, the responder
+            // processing msg1 does ONLY MixHash(e_pub) and then DecryptAndHash.
+            // The initiator does MixKey(es) on its side; the responder does not.
+            // Adding MixKey(e_pub) or MixKey(es) here makes k diverge from
+            // Chrome's and causes the AEAD open to fail.
             val pt1 = noise.decryptAndHash(tag1)
             Log.d(TAG, "msg1 plaintext = ${hex(pt1)} (expected empty)")
 
