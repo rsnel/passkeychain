@@ -155,11 +155,11 @@ class CredentialKeyTest {
     }
 
     @Test fun hkdfIsDeterministicAndSized() {
-        val a = HybridTransport.hkdf("ikm".toByteArray(), byteArrayOf(1), 32)
-        val b = HybridTransport.hkdf("ikm".toByteArray(), byteArrayOf(1), 32)
+        val a = HybridTransport.hkdf("ikm".toByteArray(), ByteArray(32), byteArrayOf(1), 32)
+        val b = HybridTransport.hkdf("ikm".toByteArray(), ByteArray(32), byteArrayOf(1), 32)
         assertArrayEquals(a, b)
         assertEquals(32, a.size)
-        assertEquals(16, HybridTransport.hkdf("ikm".toByteArray(), byteArrayOf(2), 16).size)
+        assertEquals(16, HybridTransport.hkdf("ikm".toByteArray(), ByteArray(32), byteArrayOf(2), 16).size)
     }
 
     @Test fun hybridGetAssertionBuildsSignedResponse() {
