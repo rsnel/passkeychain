@@ -273,12 +273,26 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             val ephPubR = uncompressed(ephR.public as ECPublicKey)
             Log.d(TAG, "responder e_pub_r = ${hex(ephPubR)}")
 
-            // Process msg1:
-            //   MixHash(e_pub_i)
+            // Process msg1 in the order the Noise pattern dictates:
+            //   1. MixHash(e_pub_i)          (e token)
+            //   2. DecryptAndHash(tag1)      (the payload after e)
+            // The ee DH belongs to msg2, NOT msg1, so it must not touch k before
+            // tag1 is authenticated. Getting this order wrong produces exactly
+            // the AEAD open failure we saw: decrypting with a key that was
+            // already advanced by MixKey(ee).
             noise.mixHash(ePubI)
             Log.d(TAG, "after MixHash(e_pub_i) h = ${hex(noise.h)}")
 
-            //   ee = ECDH(eph_priv_r, e_pub_i)
+            val pt1 = noise.decryptAndHash(tag1)
+            Log.d(TAG, "msg1 plaintext = ${hex(pt1)} (expected empty)")
+
+            // Build msg2: <- e, ee
+            //   1. MixHash(e_pub_r)          (e token)
+            //   2. ee = ECDH(eph_priv_r, e_pub_i); MixKey(ee)
+            //   3. EncryptAndHash(empty)     (payload)
+            noise.mixHash(ephPubR)
+            Log.d(TAG, "after MixHash(e_pub_r) h = ${hex(noise.h)}")
+
             val ee = ecdh(ephR.private as ECPrivateKey, ePubI)
             Log.d(TAG, "ee = ${hex(ee)}")
             noise.mixKey(ee)
@@ -286,14 +300,6 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             Log.d(TAG, "after MixKey(ee) k  = ${hex(noise.k)}")
             Log.d(TAG, "after MixKey(ee) h  = ${hex(noise.h)}")
 
-            //   DecryptAndHash(tag1) - should yield empty plaintext
-            val pt1 = noise.decryptAndHash(tag1)
-            Log.d(TAG, "msg1 plaintext = ${hex(pt1)} (expected empty)")
-
-            // Build msg2:
-            //   MixHash(e_pub_r)
-            noise.mixHash(ephPubR)
-            //   EncryptAndHash(empty)
             val tag2 = noise.encryptAndHash(ByteArray(0))
             val msg2 = ephPubR + tag2
             Log.d(TAG, "msg2 ${msg2.size} bytes: ${hex(msg2)}")
