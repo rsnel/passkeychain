@@ -157,8 +157,8 @@ class HybridTransport(
         /** HKDF-SHA256 (extract+expand) with an all-zero salt, per caBLE usage. */
         fun hkdf(ikm: ByteArray, info: ByteArray, len: Int): ByteArray {
             val mac = Mac.getInstance("HmacSHA256")
-            // Extract: Salt is an empty byte array (or 32 zero bytes, Chromium often uses empty)
-            mac.init(SecretKeySpec(ByteArray(0), "HmacSHA256"))
+            // Extract: Salt is 32 zero bytes for HKDF-SHA256
+            mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
             val prk = mac.doFinal(ikm)
             
             // Expand
