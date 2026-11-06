@@ -26,22 +26,22 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * caBLE v2 tunnel client. WebSocket + Noise NKpsk0 responder, following
+ * caBLE v2 tunnel client. WebSocket + Noise KNpsk0 responder, following
  * Chromium device/fido/cable/noise.cc exactly:
  *
- *   Init(kNKpsk0)          -> ck = zeros || "Noise_NKpsk0_P256_AESGCM_SHA256", h = ck
+ *   Init(kKNpsk0)          -> ck = zeros || "Noise_KNpsk0_P256_AESGCM_SHA256", h = ck
  *   MixHash([0x00])
  *   MixHash(peerIdentity65)  // the QR's 65-byte uncompressed P-256 public key
  *   MixKeyAndHash(psk)       // HKDF<96>(ikm=psk, salt=ck) -> (ck, hash, key); MixHash(hash)
  *
- * Then the NKpsk0 pattern: <- e, ee (msg2 from responder).
+ * Then the KNpsk0 pattern: <- e, ee (msg2 from responder).
  *
  * Everything is logged: h, ck, k, nonce counter, and raw message bytes.
  */
 class NoiseTunnelClient : HybridTransport.TunnelClient {
 
     private val TAG = "NoiseTunnelClient"
-    private val PROTOCOL_NAME = "Noise_NKpsk0_P256_AESGCM_SHA256"
+    private val PROTOCOL_NAME = "Noise_KNpsk0_P256_AESGCM_SHA256"
 
     override fun connectNewTunnel(tunnelUrl: String): HybridTransport.TunnelClient.NewTunnel {
         Log.d(TAG, "Connecting to $tunnelUrl")
@@ -137,7 +137,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             Log.d(TAG, "NoiseState init: peerIdentity65 = ${hex(peerIdentity65)}")
             Log.d(TAG, "NoiseState init: eidPlaintext  = ${hex(STATIC_EID_PLAINTEXT)}")
 
-            // Init(kNKpsk0): ck = zeros || protocol_name; h = ck
+            // Init(kKNpsk0): ck = zeros || protocol_name; h = ck
             val nameBytes = PROTOCOL_NAME.toByteArray(Charsets.US_ASCII)
             ck = ByteArray(32)
             System.arraycopy(nameBytes, 0, ck, 0, minOf(nameBytes.size, 32))
@@ -145,9 +145,9 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             Log.d(TAG, "init ck = ${hex(ck)}")
             Log.d(TAG, "init h  = ${hex(h)}")
 
-            // NKpsk0 responder uses prologue = 0x00 (Chromium RespondToHandshake,
-            // NKpsk0 branch uses 0x00.
-            mixHash(byteArrayOf(0x00))
+            // KNpsk0 responder uses prologue = 0x01 (Chromium RespondToHandshake,
+            // else branch). NKpsk0 / NK use prologue 0x00.
+            mixHash(byteArrayOf(0x01))
             Log.d(TAG, "after MixHash([0x01]) h = ${hex(h)}")
 
             // MixHash(peerIdentity65)
@@ -296,7 +296,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             noise.mixHash(ePubI)
             Log.d(TAG, "after MixHash(e_pub_i) h = ${hex(noise.h)}")
 
-            // Chromium's RespondToHandshake does, for the NKpsk0 branch:
+            // Chromium's RespondToHandshake does, for the KNpsk0 branch:
             //   noise.MixHash(peer_point_bytes);
             //   noise.MixKey(peer_point_bytes);
             //   // no es DH (identity is null)
