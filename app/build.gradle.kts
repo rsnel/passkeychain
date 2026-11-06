@@ -133,6 +133,9 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
+    // WebSocket client for the caBLE v2 tunnel (OkHttp; java.net.http is not on Android)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // JSON for import/export uses org.json (bundled in Android) — no dependency.
 
     testImplementation("junit:junit:4.13.2")

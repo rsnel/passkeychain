@@ -87,29 +87,28 @@ class HybridTransport(
      * (The 2 zero bytes allow Chrome to verify correct decryption).
      */
     private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
+        // Layout per Chromium FromComponents: 1 + kNonceSize(10) + routing_id(3) + domain(2) = 16
         val plaintextEid = ByteArray(16)
-        
+
         // Byte 0: 0x00
         plaintextEid[0] = 0
-        
-        // Bytes 1-8: 8-byte nonce
-        val nonce = ByteArray(8)
+
+        // Bytes 1-10: 10-byte nonce (kNonceSize = 10)
+        val nonce = ByteArray(10)
         SecureRandom().nextBytes(nonce)
-        System.arraycopy(nonce, 0, plaintextEid, 1, 8)
-        
-        // Bytes 9-11: routing ID (set to 0)
-        // Bytes 12-13: tunnel server ID (0 for cable.ua5v.com)
-        // Bytes 14-15: zeros (already 0)
-        
+        System.arraycopy(nonce, 0, plaintextEid, 1, 10)
+
+        // Bytes 11-13: routing ID (0)
+        // Bytes 14-15: tunnel server domain (0 for cable.ua5v.com), big-endian
+
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
-        val ciphertext = cipher.doFinal(plaintextEid) // 16 bytes
-        
+        val ciphertext = cipher.doFinal(plaintextEid)
+
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
-        val hmac = mac.doFinal(ciphertext) // HMAC over ciphertext
-        
-        // Return: 16-byte ciphertext + first 4 bytes of HMAC (Total 20 bytes)
+        val hmac = mac.doFinal(ciphertext)
+
         return ciphertext + hmac.copyOfRange(0, 4)
     }
 
@@ -122,12 +121,12 @@ class HybridTransport(
         ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), keys.eid)                        // 20-byte payload now
         try {
             val channel = tunnel.connectAndHandshake(   // 20-byte payload now
-                tunnelUrl = "wss://cable.ua5v.com/cable/connect",
+                tunnelUrl = "wss://cable.ua5v.com/cable/connect/000000/" + keys.tunnelId.joinToString("") { "%02x".format(it) },
                 psk = keys.psk,
                 peerIdentity = qr.peerPublicKey,
             )
             val request = channel.receive()              // CTAP2 getAssertion (CBOR)
-            val response = buildGetAssertionResponse(request, passkey)
+            val response = buildCtapResponse(request, passkey)
             channel.send(response)
             channel.close()
             return response
@@ -141,6 +140,16 @@ class HybridTransport(
      * the signed response map {1: credential, 2: authData, 3: signature,
      * 4: user}. The signing itself reuses the shared, verified [Assertion] code.
      */
+    /** Dispatch on CTAP2 command byte; handle Chrome's makeCredential probe gracefully. */
+    fun buildCtapResponse(ctapRequest: ByteArray, passkey: Passkey): ByteArray {
+        require(ctapRequest.isNotEmpty()) { "empty CTAP request" }
+        return when (ctapRequest[0].toInt() and 0xFF) {
+            0x01 -> byteArrayOf(0x2E.toByte()) // authenticatorMakeCredential -> CTAP2_ERR_NO_CREDENTIALS
+            0x02 -> buildGetAssertionResponse(ctapRequest, passkey)
+            else -> byteArrayOf(0x01.toByte()) // CTAP1_ERR_INVALID_COMMAND
+        }
+    }
+
     fun buildGetAssertionResponse(ctapRequest: ByteArray, passkey: Passkey): ByteArray {
         require(ctapRequest.isNotEmpty() && ctapRequest[0].toInt() == 0x02) { "not a getAssertion command" }
         @Suppress("UNCHECKED_CAST")
