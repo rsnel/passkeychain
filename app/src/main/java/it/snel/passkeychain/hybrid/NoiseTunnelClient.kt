@@ -93,10 +93,17 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         val routingId = hexToBytes(shardHeader.replace("-", ""))
         require(routingId.size == 3) { "routing ID must be 3 bytes, got ${routingId.size}" }
 
-        val channel = NoiseResponderChannel(ws, incoming)
+        // Construct the channel lazily. NoiseResponderChannel reads
+        // STATIC_PSK and STATIC_EID_PLAINTEXT in its init; those statics are
+        // set by HybridTransport.authenticate() after connectNewTunnel
+        // returns. Constructing the channel here would freeze the zero
+        // defaults. Lazy construction defers init until authenticate()
+        // accesses newTunnel.channel, which is after the statics are set.
         return object : HybridTransport.TunnelClient.NewTunnel {
             override val routingId: ByteArray = routingId
-            override val channel: HybridTransport.TunnelClient.Channel = channel
+            override val channel: HybridTransport.TunnelClient.Channel by lazy {
+                NoiseResponderChannel(ws, incoming)
+            }
         }
     }
 
