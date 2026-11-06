@@ -325,6 +325,15 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
             val ee = ecdh(ephR.private as ECPrivateKey, ePubI)
             Log.d(TAG, "ee = ${hex(ee)}")
+
+            // Offline verification: capture the exact inputs to MixKey(ee).
+            // msg2_check.py computes HKDF2(ck_before_ee, ee) and should produce
+            // exactly the ck/k logged immediately after.
+            val ckBeforeEe = noise.ck.copyOf()
+            Log.d(TAG, "msg2-check ck_before_ee = ${hex(ckBeforeEe)}")
+            Log.d(TAG, "msg2-check ephPubR     = ${hex(ephPubR)}")
+            Log.d(TAG, "msg2-check ee          = ${hex(ee)}")
+
             noise.mixKey(ee)
             Log.d(TAG, "after MixKey(ee) ck = ${hex(noise.ck)}")
             Log.d(TAG, "after MixKey(ee) k  = ${hex(noise.k)}")
