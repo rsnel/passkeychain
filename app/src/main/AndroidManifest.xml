@@ -36,7 +36,7 @@
             android:name=".camera.QrScanActivity"
             android:exported="false"
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.PassKeyChain"/>
+            android:theme="@style/Theme.PassKeyChain.Scan"/>
 
         <!-- Launched only via the provider's own PendingIntent; not exported. -->
         <activity

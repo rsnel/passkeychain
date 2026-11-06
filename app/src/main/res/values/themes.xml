@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Compose draws the UI edge to edge; the window theme only matters
+         for the moment before the first frame. -->
     <style name="Theme.PassKeyChain" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/pkc_window_bg</item>
-        <item name="android:statusBarColor">#4F46E5</item>
-        <item name="android:navigationBarColor">@color/pkc_window_bg</item>
+    </style>
+    <style name="Theme.PassKeyChain.Scan" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>
