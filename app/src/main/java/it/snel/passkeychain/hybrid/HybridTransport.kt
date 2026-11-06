@@ -82,15 +82,19 @@ class HybridTransport(
     private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
         val plaintextEid = ByteArray(16)
         
-        // Chromium: kNonceSize = 10 bytes
+        // 10-byte nonce
         val nonce = ByteArray(10)
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 0, 10)
         
-        // kRoutingIdSize = 3 bytes (bytes 10-12). Set to zero for now.
-        // Tunnel server ID (bytes 13-15). 0 = cable.ua5v.com per Chromium.
+        // Set routing ID to a non-zero value to test if zero is rejected
+        plaintextEid[10] = 1
+        plaintextEid[11] = 2
+        plaintextEid[12] = 3
+        
+        // Tunnel server ID (bytes 13-14). Try value 1.
         plaintextEid[13] = 0
-        plaintextEid[14] = 0
+        plaintextEid[14] = 1
         plaintextEid[15] = 0
         
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
@@ -99,7 +103,8 @@ class HybridTransport(
         
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
-        val hmac = mac.doFinal(ciphertext)
+        // Try HMAC over plaintext instead of ciphertext
+        val hmac = mac.doFinal(plaintextEid)
         
         // Return: 16-byte ciphertext + first 4 bytes of HMAC (Total 20 bytes)
         return ciphertext + hmac.copyOfRange(0, 4)
