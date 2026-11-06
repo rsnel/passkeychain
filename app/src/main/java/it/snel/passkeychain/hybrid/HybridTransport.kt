@@ -82,13 +82,9 @@ class HybridTransport(
     private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
         val plaintextEid = ByteArray(16)
         
-        // 8-byte nonce
         val nonce = ByteArray(8)
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 0, 8)
-        
-        // Explicitly zero bytes 8-15
-        for (i in 8 until 16) { plaintextEid[i] = 0 }
         
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
@@ -98,7 +94,6 @@ class HybridTransport(
         mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
         val hmac = mac.doFinal(ciphertext) // HMAC over ciphertext
         
-        // Return: 16-byte ciphertext + first 4 bytes of HMAC
         return ciphertext + hmac.copyOfRange(0, 4)
     }
 
@@ -162,10 +157,11 @@ class HybridTransport(
         /** HKDF-SHA256 (extract+expand) with an all-zero salt, per caBLE usage. */
         fun hkdf(ikm: ByteArray, info: ByteArray, len: Int): ByteArray {
             val mac = Mac.getInstance("HmacSHA256")
-            // extract
-            mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
+            // Extract: Salt is an empty byte array (or 32 zero bytes, Chromium often uses empty)
+            mac.init(SecretKeySpec(ByteArray(0), "HmacSHA256"))
             val prk = mac.doFinal(ikm)
-            // expand
+            
+            // Expand
             mac.init(SecretKeySpec(prk, "HmacSHA256"))
             val out = ByteArray(len)
             var t = ByteArray(0); var pos = 0; var counter = 1
