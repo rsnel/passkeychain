@@ -92,6 +92,13 @@ class HybridTransport(
         // 1. Connect /cable/new/ FIRST. The WebSocket must open before we advertise,
         //    because the routing ID comes from the response headers.
         val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
+
+        // Inject peer identity and PSK so NoiseTunnelClient can build its state
+        // before returning the channel.
+        val peer65 = it.snel.passkeychain.hybrid.NoiseTunnelClient.decompressPeerIdentity(qr.peerPublicKey)
+        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PEER_IDENTITY = peer65
+        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PSK = psk
+
         val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
         val routingId = newTunnel.routingId
 
@@ -100,7 +107,7 @@ class HybridTransport(
         ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), eid)
 
         try {
-            // 3. Wait for the Noise handshake on the already-open WebSocket.
+            // 3. Wait for the Noise handshake + CTAP2 request on the already-open WebSocket.
             val channel = newTunnel.channel
             val request = channel.receive()
             val response = buildCtapResponse(request, passkey)
