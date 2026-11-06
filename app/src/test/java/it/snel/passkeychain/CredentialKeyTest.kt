@@ -175,7 +175,7 @@ class CredentialKeyTest {
         val transport = HybridTransport(
             object : HybridTransport.BleAdvertiser { override fun advertise(serviceUuid: java.util.UUID, payload: ByteArray) {}; override fun stop() {} },
             object : HybridTransport.TunnelClient {
-                override fun connectAndHandshake(tunnelUrl: String, psk: ByteArray, peerIdentity: ByteArray) =
+                override fun connectNewTunnel(tunnelUrl: String): HybridTransport.TunnelClient.NewTunnel =
                     throw UnsupportedOperationException()
             },
         )
