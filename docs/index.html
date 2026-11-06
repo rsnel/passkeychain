@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PassKeyChain — import, store &amp; use your passkeys on Android</title>
-<meta name="description" content="An open-source Android app that imports FIDO2 passkeys (KeePassXC JSON), stores them in Android Keystore-encrypted storage, signs in-device logins as a passkey provider, and answers cross-device QR sign-ins.">
+<meta name="description" content="An open-source Android app that imports FIDO2 passkeys (KeePassXC JSON), stores them in Android Keystore-encrypted storage, and offers them to sign-ins on the phone as a passkey provider.">
 <meta name="theme-color" content="#4F46E5">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon.png" type="image/png">
 <style>
   :root{
-    --indigo:#4F46E5; --indigo-2:#6366F1; --indigo-d:#312E81;
+    --indigo:#4A52B8; --indigo-2:#6366F1; --indigo-d:#312E81; --violet:#8B3FD9;
     --gold:#F2B705; --ink:#14121F; --muted:#6b6880;
     --bg:#ffffff; --fg:#1a1830; --card:#ffffff; --line:#ECEAF6; --soft:#F6F6FB;
     --maxw:1080px;
@@ -26,14 +27,18 @@
   .btn-primary{background:var(--indigo);color:#fff}
   .btn-primary:hover{background:#4338ca}
   .btn-ghost{background:transparent;color:var(--fg);border-color:var(--line)}
+  .hero .btn-primary{background:#fff;color:#3b33b0}
+  .hero .btn-primary:hover{background:#eceaff}
+  .hero .btn-ghost{color:#fff;border-color:#ffffff80}
+  .hero .btn-ghost:hover{border-color:#fff;background:#ffffff1a}
   .btn-ghost:hover{border-color:var(--indigo-2)}
 
   /* hero */
-  header.hero{background:radial-gradient(1200px 500px at 25% -10%, var(--indigo-2), var(--indigo) 55%, var(--indigo-d));color:#fff;padding:72px 0 64px}
+  header.hero{background:linear-gradient(135deg, #4F46E5 0%, #6A43DF 55%, var(--violet) 100%);color:#fff;padding:72px 0 64px}
   .hero-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:40px;align-items:center}
   .hero h1{font-size:clamp(34px,5vw,52px);line-height:1.05;margin:0 0 14px;font-weight:800;letter-spacing:-.5px}
   .hero p.lede{font-size:19px;color:#dcd9ff;margin:0 0 28px;max-width:46ch}
-  .hero .logo{width:180px;height:180px;margin:0 auto;display:block;filter:drop-shadow(0 18px 40px rgba(0,0,0,.35))}
+  .hero .logo{width:200px;height:200px;margin:0 auto;display:block;border-radius:30%;box-shadow:0 0 0 1px #ffffff40, 0 24px 60px rgba(20,10,60,.45)}
   .cta{display:flex;gap:12px;flex-wrap:wrap}
   .pills{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
   .pill{font-size:13px;background:#ffffff1a;border:1px solid #ffffff2e;color:#eceaff;padding:5px 12px;border-radius:999px}
@@ -86,7 +91,7 @@
   <div class="wrap hero-grid">
     <div>
       <h1>Your passkeys.<br>Your device.<br>Your keys.</h1>
-      <p class="lede">PassKeyChain imports FIDO2 passkeys from a KeePassXC export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and uses them to sign in — on the phone, or across devices by scanning a sign-in QR.</p>
+      <p class="lede">PassKeyChain imports FIDO2 passkeys from a KeePassXC export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and offers them when you sign in on your phone.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/rsnel/passkeychain/releases/download/debug/passkeychain-debug.apk">⬇ Download debug APK</a>
         <a class="btn btn-ghost" href="https://github.com/rsnel/passkeychain">View source on GitHub</a>
@@ -100,7 +105,7 @@
       </div>
     </div>
     <div class="hero-media">
-      <img class="logo" src="assets/logo.png" alt="PassKeyChain logo — a gold key with a keyhole on an indigo field">
+      <img class="logo" src="assets/logo.svg" alt="PassKeyChain logo: a white key on a gold key ring, on an indigo-to-violet field">
     </div>
   </div>
 </header>
@@ -127,8 +132,8 @@
       </div>
       <div class="card">
         <div class="ic">🔗</div>
-        <h3>Cross-device QR</h3>
-        <p>Scans the <code>FIDO:/</code> hybrid QR shown by a desktop sign-in page and signs the assertion with your imported key.</p>
+        <h3>Recognizes sign-in QRs</h3>
+        <p>Scans and decodes the <code>FIDO:/</code> QR a computer shows for passkey sign-in. Completing such a sign-in from the phone is not supported yet.</p>
       </div>
       <div class="card">
         <div class="ic">📤</div>
@@ -147,11 +152,11 @@
 <section class="shots">
   <div class="wrap">
     <h2>A look at the app</h2>
-    <p class="sub">Design renderings of the current build.</p>
+    <p class="sub">Material 3, with Material You colors on Android 12 and newer. (Renderings of the current build.)</p>
     <div class="shot-row">
-      <div class="shot"><img src="assets/screen_home.png" alt="Home screen listing imported passkeys"><p>Your imported passkeys, encrypted at rest.</p></div>
-      <div class="shot"><img src="assets/screen_scan.png" alt="Camera scanning a FIDO hybrid QR code"><p>Scan a desktop sign-in QR.</p></div>
-      <div class="shot"><img src="assets/screen_import.png" alt="Empty state with the import menu open"><p>Import a KeePassXC export to begin.</p></div>
+      <div class="shot"><img src="assets/screen_home.png" alt="Passkeys grouped per website"><p>Your passkeys, grouped per website.</p></div>
+      <div class="shot"><img src="assets/screen_details.png" alt="Details of one passkey in a bottom sheet"><p>Details, copy and delete (with undo).</p></div>
+      <div class="shot"><img src="assets/screen_scan.png" alt="Camera scanning a sign-in QR code"><p>Recognizes a computer’s sign-in QR.</p></div>
     </div>
   </div>
 </section>
@@ -180,7 +185,7 @@
 <section class="shots">
   <div class="wrap">
     <h2>Project status — honestly</h2>
-    <p class="sub">Built to be verifiable; the hard cross-device bits are a work in progress.</p>
+    <p class="sub">Built to be verifiable; signing in on another device is not supported.</p>
     <div class="status">
       <div class="box good">
         <h3>✅ Working &amp; unit-tested</h3>
@@ -194,7 +199,7 @@
         </ul>
       </div>
       <div class="box wip">
-        <h3>🚧 In progress (needs a device)</h3>
+        <h3>🚧 Not supported yet</h3>
         <ul>
           <li>The hybrid/caBLE <strong>BLE proximity</strong> advertisement</li>
           <li>The Noise-encrypted relay <strong>tunnel</strong></li>

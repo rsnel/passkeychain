@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="18 18 72 72">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4F46E5"/><stop offset="1" stop-color="#8B3FD9"/></linearGradient><clipPath id="front"><path d="M0,0 L108,108 L0,108 Z"/></clipPath></defs><rect width="108" height="108" fill="url(#bg)"/>
+<g transform="translate(54 54) scale(0.8) translate(-50.5 -50.5)">
+<path d="M20,33 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" fill="none" stroke="#FFC83D" stroke-width="5"/>
+<g transform="rotate(45 54 54)">
+<path transform="translate(1.5 2.5)" d="M19,54 a15,15 0 1,1 30,0 a15,15 0 1,1 -30,0 Z M28,54 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 Z M50,50 h30 a4,4 0 0 1 4,4 v0 a4,4 0 0 1 -4,4 h-30 a4,4 0 0 1 -4,-4 v-0 a4,4 0 0 1 4,-4 Z M76.5,54 h4.0 a2.5,2.5 0 0 1 2.5,2.5 v8.0 a2.5,2.5 0 0 1 -2.5,2.5 h-4.0 a2.5,2.5 0 0 1 -2.5,-2.5 v-8.0 a2.5,2.5 0 0 1 2.5,-2.5 Z M65.5,54 h2.0 a2.5,2.5 0 0 1 2.5,2.5 v5.0 a2.5,2.5 0 0 1 -2.5,2.5 h-2.0 a2.5,2.5 0 0 1 -2.5,-2.5 v-5.0 a2.5,2.5 0 0 1 2.5,-2.5 Z" fill="#1B1464" fill-opacity="0.25"/>
+<path d="M19,54 a15,15 0 1,1 30,0 a15,15 0 1,1 -30,0 Z M28,54 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 Z M50,50 h30 a4,4 0 0 1 4,4 v0 a4,4 0 0 1 -4,4 h-30 a4,4 0 0 1 -4,-4 v-0 a4,4 0 0 1 4,-4 Z M76.5,54 h4.0 a2.5,2.5 0 0 1 2.5,2.5 v8.0 a2.5,2.5 0 0 1 -2.5,2.5 h-4.0 a2.5,2.5 0 0 1 -2.5,-2.5 v-8.0 a2.5,2.5 0 0 1 2.5,-2.5 Z M65.5,54 h2.0 a2.5,2.5 0 0 1 2.5,2.5 v5.0 a2.5,2.5 0 0 1 -2.5,2.5 h-2.0 a2.5,2.5 0 0 1 -2.5,-2.5 v-5.0 a2.5,2.5 0 0 1 2.5,-2.5 Z" fill="#FFFFFF"/></g>
+<path d="M20,33 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" fill="none" stroke="#FFC83D" stroke-width="5" clip-path="url(#front)"/>
+</g></svg>
