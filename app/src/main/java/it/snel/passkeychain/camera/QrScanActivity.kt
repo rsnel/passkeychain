@@ -114,8 +114,10 @@ class QrScanActivity : ComponentActivity() {
     }
 
     private fun finishWith(qr: String?) {
-        val data = intent.apply { putExtra(RESULT_QR, qr); putExtra(RESULT_IS_FIDO, qr != null && FidoQr.isFidoQr(qr)) }
-        setResult(if (qr != null) RESULT_OK else RESULT_CANCELED, data)
+        val intent = android.content.Intent(this, it.snel.passkeychain.hybrid.HybridSignInActivity::class.java)
+            intent.putExtra("qr_text", qr)
+            startActivity(intent)
+        setResult(if (qr != null) RESULT_OK else RESULT_CANCELED)
         finish()
     }
 

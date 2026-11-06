@@ -173,7 +173,7 @@ class CredentialKeyTest {
         val params = Cbor.encode(linkedMapOf<Any, Any>(1 to "login.microsoft.com", 2 to clientDataHash))
         val req = byteArrayOf(0x02) + params
         val transport = HybridTransport(
-            object : HybridTransport.BleAdvertiser { override fun advertise(eid: ByteArray) {}; override fun stop() {} },
+            object : HybridTransport.BleAdvertiser { override fun advertise(serviceUuid: java.util.UUID, payload: ByteArray) {}; override fun stop() {} },
             object : HybridTransport.TunnelClient {
                 override fun connectAndHandshake(tunnelUrl: String, psk: ByteArray, peerIdentity: ByteArray) =
                     throw UnsupportedOperationException()

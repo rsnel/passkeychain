@@ -29,6 +29,7 @@
         android:theme="@style/Theme.PassKeyChain"
         tools:targetApi="34">
 
+        <activity android:name=".hybrid.HybridSignInActivity" android:exported="false" />
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
