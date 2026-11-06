@@ -58,17 +58,20 @@ class HybridTransport(
      * HKDF-SHA256 with the caBLE info labels. (Deterministic; unit-tested.)
      */
     fun deriveKeys(qr: FidoQr): Keys {
-        // Chromium: kEIDKeySize is 64 bytes (32-byte AES key + 32-byte HMAC key)
-        val eidKeyMaterial = hkdf(qr.qrSecret, info = byteArrayOf(1), len = 64)
+        // 4-byte little-endian info for kEIDKey (1)
+        val infoEid = byteArrayOf(1, 0, 0, 0)
+        
+        // For the initial QR handshake, the salt is empty
+        val salt = ByteArray(0)
+        
+        val eidKeyMaterial = hkdf(qr.qrSecret, salt, infoEid, 64)
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
         val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
         
-        val tunnelId = hkdf(qr.qrSecret, info = byteArrayOf(2), len = 16)
-        val psk = hkdf(qr.qrSecret, info = byteArrayOf(3), len = 32)
+        val tunnelId = hkdf(qr.qrSecret, salt, byteArrayOf(2, 0, 0, 0), 16)
+        val psk = hkdf(qr.qrSecret, salt, byteArrayOf(3, 0, 0, 0), 32)
         
-        // Construct the 20-byte payload (16-byte ciphertext + 4-byte HMAC)
         val eidPayload = buildEidPayload(aesKey, hmacKey)
-        
         return Keys(eidPayload, tunnelId, psk)
     }
 
@@ -155,10 +158,14 @@ class HybridTransport(
 
     companion object {
         /** HKDF-SHA256 (extract+expand) with an all-zero salt, per caBLE usage. */
-        fun hkdf(ikm: ByteArray, info: ByteArray, len: Int): ByteArray {
+        fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
             val mac = Mac.getInstance("HmacSHA256")
-            // Extract: Salt is 32 zero bytes for HKDF-SHA256
-            mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
+            // Extract: Salt is the client nonce (or empty for EID)
+            if (salt.isEmpty()) {
+                mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
+            } else {
+                mac.init(SecretKeySpec(salt, "HmacSHA256"))
+            }
             val prk = mac.doFinal(ikm)
             
             // Expand
