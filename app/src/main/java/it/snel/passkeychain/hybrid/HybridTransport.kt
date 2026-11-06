@@ -49,9 +49,10 @@ class HybridTransport(
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
         val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
         val tunnelId = hkdf(qr.qrSecret, salt, byteArrayOf(2, 0, 0, 0), 16)
-        val psk = hkdf(qr.qrSecret, salt, byteArrayOf(3, 0, 0, 0), 32)
-        val eidPayload = buildEidPayload(aesKey, hmacKey, ByteArray(3)) // routing filled later
-        return Keys(eidPayload, tunnelId, psk)
+        // psk is derived in authenticate() once the EID plaintext exists,
+        // because the BLE advert plaintext is its HKDF salt.
+        val eidPayload = buildEidPlaintext(aesKey, hmacKey, ByteArray(3)).let { encryptEid(aesKey, hmacKey, it) }
+        return Keys(eidPayload, tunnelId, ByteArray(0))
     }
 
     /**
@@ -61,7 +62,12 @@ class HybridTransport(
      *   bytes 11-13: routing ID (3 bytes, from X-caBLE-Shard)
      *   bytes 14-15: tunnel server domain (big-endian, 0 for cable.ua5v.com)
      */
-    fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray, routingId: ByteArray): ByteArray {
+    /**
+     * Build the 16-byte EID plaintext. Layout per Chromium FromComponents:
+     *   1 (0x00) + 10 (nonce) + 3 (routing_id) + 2 (domain) = 16.
+     * The plaintext is also the HKDF salt for the Noise PSK.
+     */
+    fun buildEidPlaintext(aesKey: ByteArray, hmacKey: ByteArray, routingId: ByteArray): ByteArray {
         require(routingId.size == 3) { "routingId must be 3 bytes" }
         val plaintextEid = ByteArray(16)
         plaintextEid[0] = 0
@@ -70,7 +76,13 @@ class HybridTransport(
         System.arraycopy(nonce, 0, plaintextEid, 1, 10)
         System.arraycopy(routingId, 0, plaintextEid, 11, 3)
         // bytes 14-15 already zero (domain 0)
+        return plaintextEid
+    }
 
+    /** AES-ECB the plaintext with aesKey, HMAC-SHA256 the ciphertext with hmacKey,
+     *  return the 20-byte BLE payload: 16-byte ciphertext || 4-byte HMAC tag. */
+    fun encryptEid(aesKey: ByteArray, hmacKey: ByteArray, plaintextEid: ByteArray): ByteArray {
+        require(plaintextEid.size == 16) { "EID plaintext must be 16 bytes" }
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
         val ciphertext = cipher.doFinal(plaintextEid)
@@ -86,24 +98,27 @@ class HybridTransport(
         val eidKeyMaterial = hkdf(qr.qrSecret, salt, byteArrayOf(1, 0, 0, 0), 64)
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
         val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
-        val psk = hkdf(qr.qrSecret, salt, byteArrayOf(3, 0, 0, 0), 32)
         val tunnelId = hkdf(qr.qrSecret, salt, byteArrayOf(2, 0, 0, 0), 16)
 
         // 1. Connect /cable/new/ FIRST. The WebSocket must open before we advertise,
         //    because the routing ID comes from the response headers.
         val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
 
-        // Inject peer identity and PSK so NoiseTunnelClient can build its state
-        // before returning the channel.
+        // Inject peer identity so NoiseTunnelClient can build its state. PSK is
+        // injected after the EID plaintext exists, because the plaintext is its salt.
         val peer65 = it.snel.passkeychain.hybrid.NoiseTunnelClient.decompressPeerIdentity(qr.peerPublicKey)
         it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PEER_IDENTITY = peer65
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PSK = psk
 
         val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
         val routingId = newTunnel.routingId
 
-        // 2. Build the EID with the real routing ID, advertise BLE.
-        val eid = buildEidPayload(aesKey, hmacKey, routingId)
+        // 2. Build the 16-byte EID plaintext. Its bytes are the HKDF salt for the PSK.
+        val eidPlaintext = buildEidPlaintext(aesKey, hmacKey, routingId)
+        // 3. Derive the Noise PSK: HKDF(qrSecret, salt=eidPlaintext, info=[3,0,0,0]).
+        val psk = hkdf(qr.qrSecret, eidPlaintext, byteArrayOf(3, 0, 0, 0), 32)
+        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PSK = psk
+        // 4. Encrypt the EID and advertise it.
+        val eid = encryptEid(aesKey, hmacKey, eidPlaintext)
         ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), eid)
 
         try {
