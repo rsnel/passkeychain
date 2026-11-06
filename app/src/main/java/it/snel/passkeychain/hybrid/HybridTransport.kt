@@ -1,8 +1,6 @@
 package it.snel.passkeychain.hybrid
 
-import android.util.Log
 import java.util.UUID
-
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.webauthn.Assertion
 import it.snel.passkeychain.webauthn.Cbor
@@ -12,39 +10,30 @@ import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-/**
- * Cross-device (hybrid / caBLE v2) authenticator — the flow behind the
- * Microsoft "scan this QR with the device that has your passkey" screen.
- *
- * STATUS: the deterministic cryptography below is implemented and unit-tested
- * (QR decode, HKDF key derivation, CTAP2 getAssertion response assembly). The
- * two runtime stages that can only be exercised on a physical device — the BLE
- * advertisement that proves proximity, and the Noise-encrypted WebSocket tunnel
- * through the assigned relay — are defined as interfaces with a clearly marked
- * [DeviceStage] boundary. This is the part to iterate on against a real phone;
- * it intentionally fails loudly rather than pretending to work.
- *
- * Reference: Chromium device/fido/cable/v2_handshake.cc and the FIDO CTAP 2.x
- * "hybrid" transport appendix.
- */
 class HybridTransport(
     private val ble: BleAdvertiser,
     private val tunnel: TunnelClient,
 ) {
-
-    /** The stage that genuinely needs a device; never silently stubbed at runtime. */
     class DeviceStageMissing(stage: String) :
         UnsupportedOperationException("hybrid stage '$stage' needs on-device BLE/network and is not wired in this build")
 
     interface BleAdvertiser {
-        /** Advertise the 20-byte caBLE v2 payload using the FIDO service UUID (0xFFF9). */
-        fun advertise(serviceUuid: java.util.UUID, payload: ByteArray)
+        fun advertise(serviceUuid: UUID, payload: ByteArray)
         fun stop()
     }
 
     interface TunnelClient {
-        /** Connect to wss://<tunnelDomain>/cable/connect/… and run the Noise handshake. */
-        fun connectAndHandshake(tunnelUrl: String, psk: ByteArray, peerIdentity: ByteArray): Channel
+        /**
+         * Connect to wss://<tunnelDomain>/cable/new/<hex(tunnelId)>, with the
+         * fido.cable subprotocol, and return the routing ID read from the
+         * X-caBLE-Shard response header. The WebSocket must remain open and
+         * ready to send/receive Noise handshake bytes.
+         */
+        fun connectNewTunnel(tunnelUrl: String): NewTunnel
+        interface NewTunnel {
+            val routingId: ByteArray   // 3 bytes, from X-caBLE-Shard
+            val channel: Channel       // Noise transport, after handshake
+        }
         interface Channel {
             fun send(plaintext: ByteArray)
             fun receive(): ByteArray
@@ -54,52 +43,33 @@ class HybridTransport(
 
     data class Keys(val eid: ByteArray, val tunnelId: ByteArray, val psk: ByteArray)
 
-    /**
-     * Derive the BLE EID, tunnel id and pre-shared key from the QR secret.
-     * HKDF-SHA256 with the caBLE info labels. (Deterministic; unit-tested.)
-     */
     fun deriveKeys(qr: FidoQr): Keys {
-        // 4-byte little-endian info for kEIDKey (1)
-        val infoEid = byteArrayOf(1, 0, 0, 0)
-        
-        // For the initial QR handshake, the salt is empty
         val salt = ByteArray(0)
-        
-        val eidKeyMaterial = hkdf(qr.qrSecret, salt, infoEid, 64)
+        val eidKeyMaterial = hkdf(qr.qrSecret, salt, byteArrayOf(1, 0, 0, 0), 64)
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
         val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
-        
         val tunnelId = hkdf(qr.qrSecret, salt, byteArrayOf(2, 0, 0, 0), 16)
         val psk = hkdf(qr.qrSecret, salt, byteArrayOf(3, 0, 0, 0), 32)
-        
-        val eidPayload = buildEidPayload(aesKey, hmacKey)
-        Log.d("HybridTransport", "psk      = " + psk.joinToString("") { "%02X".format(it) })
-        Log.d("HybridTransport", "tunnelId = " + tunnelId.joinToString("") { "%02X".format(it) })
-        Log.d("HybridTransport", "eid      = " + eidPayload.joinToString("") { "%02X".format(it) })
+        val eidPayload = buildEidPayload(aesKey, hmacKey, ByteArray(3)) // routing filled later
         return Keys(eidPayload, tunnelId, psk)
     }
 
     /**
-     * Builds the 20-byte caBLE v2 BLE advertisement payload.
-     * Format: [16-byte AES-Ciphertext][4-byte HMAC-SHA256 tag]
-     *
-     * The plaintext EID is: 8-byte nonce || 3-byte routing ID || 3-byte tunnel ID || 2 zero bytes.
-     * (The 2 zero bytes allow Chrome to verify correct decryption).
+     * Build the 20-byte EID payload. The plaintext layout is:
+     *   byte 0: 0x00
+     *   bytes 1-10: 10-byte nonce
+     *   bytes 11-13: routing ID (3 bytes, from X-caBLE-Shard)
+     *   bytes 14-15: tunnel server domain (big-endian, 0 for cable.ua5v.com)
      */
-    private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
-        // Layout per Chromium FromComponents: 1 + kNonceSize(10) + routing_id(3) + domain(2) = 16
+    fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray, routingId: ByteArray): ByteArray {
+        require(routingId.size == 3) { "routingId must be 3 bytes" }
         val plaintextEid = ByteArray(16)
-
-        // Byte 0: 0x00
         plaintextEid[0] = 0
-
-        // Bytes 1-10: 10-byte nonce (kNonceSize = 10)
         val nonce = ByteArray(10)
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 1, 10)
-
-        // Bytes 11-13: routing ID (0)
-        // Bytes 14-15: tunnel server domain (0 for cable.ua5v.com), big-endian
+        System.arraycopy(routingId, 0, plaintextEid, 11, 3)
+        // bytes 14-15 already zero (domain 0)
 
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
@@ -108,24 +78,31 @@ class HybridTransport(
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
         val hmac = mac.doFinal(ciphertext)
-
         return ciphertext + hmac.copyOfRange(0, 4)
     }
 
-    /**
-     * Run the full exchange. Throws [DeviceStageMissing] at the first stage that
-     * needs hardware, so callers get an honest result rather than a fake one.
-     */
     fun authenticate(qr: FidoQr, passkey: Passkey): ByteArray {
-        val keys = deriveKeys(qr)
-        ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), keys.eid)                        // 20-byte payload now
+        val salt = ByteArray(0)
+        val eidKeyMaterial = hkdf(qr.qrSecret, salt, byteArrayOf(1, 0, 0, 0), 64)
+        val aesKey = eidKeyMaterial.copyOfRange(0, 32)
+        val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
+        val psk = hkdf(qr.qrSecret, salt, byteArrayOf(3, 0, 0, 0), 32)
+        val tunnelId = hkdf(qr.qrSecret, salt, byteArrayOf(2, 0, 0, 0), 16)
+
+        // 1. Connect /cable/new/ FIRST. The WebSocket must open before we advertise,
+        //    because the routing ID comes from the response headers.
+        val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
+        val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
+        val routingId = newTunnel.routingId
+
+        // 2. Build the EID with the real routing ID, advertise BLE.
+        val eid = buildEidPayload(aesKey, hmacKey, routingId)
+        ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), eid)
+
         try {
-            val channel = tunnel.connectAndHandshake(   // 20-byte payload now
-                tunnelUrl = "wss://cable.ua5v.com/cable/connect/000000/" + keys.tunnelId.joinToString("") { "%02x".format(it) },
-                psk = keys.psk,
-                peerIdentity = qr.peerPublicKey,
-            )
-            val request = channel.receive()              // CTAP2 getAssertion (CBOR)
+            // 3. Wait for the Noise handshake on the already-open WebSocket.
+            val channel = newTunnel.channel
+            val request = channel.receive()
             val response = buildCtapResponse(request, passkey)
             channel.send(response)
             channel.close()
@@ -135,16 +112,10 @@ class HybridTransport(
         }
     }
 
-    /**
-     * Parse a CTAP2 authenticatorGetAssertion request (command 0x02) and build
-     * the signed response map {1: credential, 2: authData, 3: signature,
-     * 4: user}. The signing itself reuses the shared, verified [Assertion] code.
-     */
-    /** Dispatch on CTAP2 command byte; handle Chrome's makeCredential probe gracefully. */
     fun buildCtapResponse(ctapRequest: ByteArray, passkey: Passkey): ByteArray {
         require(ctapRequest.isNotEmpty()) { "empty CTAP request" }
         return when (ctapRequest[0].toInt() and 0xFF) {
-            0x01 -> byteArrayOf(0x2E.toByte()) // authenticatorMakeCredential -> CTAP2_ERR_NO_CREDENTIALS
+            0x01 -> byteArrayOf(0x2E.toByte()) // makeCredential -> NO_CREDENTIALS
             0x02 -> buildGetAssertionResponse(ctapRequest, passkey)
             else -> byteArrayOf(0x01.toByte()) // CTAP1_ERR_INVALID_COMMAND
         }
@@ -157,40 +128,20 @@ class HybridTransport(
         val rpId = (params[1L] ?: params[1]) as String
         val clientDataHash = (params[2L] ?: params[2]) as ByteArray
         require(rpId == passkey.rpId) { "rpId mismatch" }
-
-        val r = Assertion.create(
-            passkey = passkey,
-            challengeB64Url = "",            // not used when clientDataHash is supplied
-            origin = "",
-            clientDataHash = clientDataHash,
-        )
+        val r = Assertion.create(passkey = passkey, challengeB64Url = "", origin = "", clientDataHash = clientDataHash)
         val credential = linkedMapOf<Any, Any>("id" to b64urlToBytes(passkey.credentialId), "type" to "public-key")
         val user = linkedMapOf<Any, Any>("id" to b64urlToBytes(passkey.userHandle))
-        val resp = linkedMapOf<Any, Any>(
-            1 to credential,
-            2 to r.authenticatorData,
-            3 to r.signature,
-            4 to user,
-        )
-        // 0x00 = CTAP2_OK status byte, then the CBOR response
+        val resp = linkedMapOf<Any, Any>(1 to credential, 2 to r.authenticatorData, 3 to r.signature, 4 to user)
         return byteArrayOf(0x00) + Cbor.encode(resp)
     }
 
     private fun b64urlToBytes(s: String): ByteArray = it.snel.passkeychain.util.B64.dUrl(s)
 
     companion object {
-        /** HKDF-SHA256 (extract+expand) with an all-zero salt, per caBLE usage. */
         fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
             val mac = Mac.getInstance("HmacSHA256")
-            // Extract: Salt is the client nonce (or empty for EID)
-            if (salt.isEmpty()) {
-                mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
-            } else {
-                mac.init(SecretKeySpec(salt, "HmacSHA256"))
-            }
+            mac.init(SecretKeySpec(if (salt.isEmpty()) ByteArray(32) else salt, "HmacSHA256"))
             val prk = mac.doFinal(ikm)
-            
-            // Expand
             mac.init(SecretKeySpec(prk, "HmacSHA256"))
             val out = ByteArray(len)
             var t = ByteArray(0); var pos = 0; var counter = 1
@@ -202,8 +153,6 @@ class HybridTransport(
             }
             return out
         }
-
-        @Suppress("unused")
         private fun sha256(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b)
     }
 }
