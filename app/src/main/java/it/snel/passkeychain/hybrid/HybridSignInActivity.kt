@@ -40,6 +40,8 @@ class HybridSignInActivity : ComponentActivity() {
             
             // For now, we only call deriveKeys and advertise to test the BLE.
             val keys = transport.deriveKeys(qr)
+            Log.d(TAG, "qr.peerPublicKey = " + qr.peerPublicKey.joinToString("") { "%02X".format(it) })
+            Log.d(TAG, "qr.qrSecret      = " + qr.qrSecret.joinToString("") { "%02X".format(it) })
             Log.d(TAG, "Starting BLE advertisement for QR: $qrText")
             bleAdvertiser.advertise(java.util.UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), keys.eid)
             

@@ -1,5 +1,6 @@
 package it.snel.passkeychain.hybrid
 
+import android.util.Log
 import java.util.UUID
 
 import it.snel.passkeychain.model.Passkey
@@ -72,6 +73,9 @@ class HybridTransport(
         val psk = hkdf(qr.qrSecret, salt, byteArrayOf(3, 0, 0, 0), 32)
         
         val eidPayload = buildEidPayload(aesKey, hmacKey)
+        Log.d("HybridTransport", "psk      = " + psk.joinToString("") { "%02X".format(it) })
+        Log.d("HybridTransport", "tunnelId = " + tunnelId.joinToString("") { "%02X".format(it) })
+        Log.d("HybridTransport", "eid      = " + eidPayload.joinToString("") { "%02X".format(it) })
         return Keys(eidPayload, tunnelId, psk)
     }
 
