@@ -82,15 +82,12 @@ class HybridTransport(
     private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
         val plaintextEid = ByteArray(16)
         
-        // 10-byte nonce (Chromium: kNonceSize = 10)
-        val nonce = ByteArray(10)
+        // Chromium commit: v2 EIDs encrypt an 8-byte nonce with 8 zero bytes.
+        val nonce = ByteArray(8)
         SecureRandom().nextBytes(nonce)
-        System.arraycopy(nonce, 0, plaintextEid, 0, 10)
+        System.arraycopy(nonce, 0, plaintextEid, 0, 8)
         
-        // Routing ID (bytes 10-12). Set to zero for now.
-        // Tunnel Server ID (bytes 13-14). Must be 0 for cable.ua5v.com (Chromium: kTunnelServer = 0).
-        // Byte 15 is reserved and should be zero.
-        // The array is initialized to zero, so we only need to set the nonce.
+        // Bytes 8-15 remain zero (initialized by ByteArray(16))
         
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
