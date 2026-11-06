@@ -39,15 +39,18 @@ class AndroidBleAdvertiser(private val context: Context) : HybridTransport.BleAd
             .setConnectable(true)
             .build()
 
+        // Chrome expects a 2-byte prefix: 0x20 (flag) + 0x00 (reserved).
+        val fullPayload = byteArrayOf(0x20, 0x00) + payload
+
         val data = AdvertiseData.Builder()
-            .addServiceData(ParcelUuid(serviceUuid), payload)
+            .addServiceData(ParcelUuid(serviceUuid), fullPayload)
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
             .build()
 
-        val hexString = payload.joinToString("") { String.format("%02X", it) }
+        val hexString = fullPayload.joinToString("") { String.format("%02X", it) }
+        Log.d(TAG, "Starting BLE advertisement with UUID $serviceUuid")
         Log.d(TAG, "Advertising payload hex: $hexString")
-        Log.d(TAG, "Starting BLE advertisement with UUID $serviceUuid and ${payload.size} bytes")
         
         advertiser?.startAdvertising(settings, data, object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
