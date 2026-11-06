@@ -35,7 +35,7 @@ class HybridTransport(
 
     interface BleAdvertiser {
         /** Advertise the 20-byte caBLE v2 payload using the FIDO service UUID (0xFFF9). */
-        fun advertise(payload: ByteArray)
+        fun advertise(serviceUuid: java.util.UUID, payload: ByteArray)
         fun stop()
     }
 
@@ -101,7 +101,7 @@ class HybridTransport(
      */
     fun authenticate(qr: FidoQr, passkey: Passkey): ByteArray {
         val keys = deriveKeys(qr)
-        ble.advertise(keys.eid)                        // 20-byte payload now
+        ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), keys.eid)                        // 20-byte payload now
         try {
             val channel = tunnel.connectAndHandshake(   // 20-byte payload now
                 tunnelUrl = "wss://cable.ua5v.com/cable/connect",
