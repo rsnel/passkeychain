@@ -27,16 +27,20 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * caBLE v2 tunnel client. WebSocket + Noise NKpsk0 responder, following
- * Chromium device/fido/cable/noise.cc exactly:
+ * Chromium device/fido/cable/noise.cc and v2_handshake.cc:
  *
  *   Init(kNKpsk0)          -> ck = zeros || "Noise_NKpsk0_P256_AESGCM_SHA256", h = ck
- *   MixHash([0x00])
- *   MixHash(peerIdentity65)  // the QR's 65-byte uncompressed P-256 public key
- *   MixKeyAndHash(psk)       // HKDF<96>(ikm=psk, salt=ck) -> (ck, hash, key); MixHash(hash)
+ *   MixHash([0x00])        -> prologue for the NKpsk0 branch
+ *   MixHash(peerIdentity65)-> the QR's 65-byte uncompressed P-256 public key
+ *   MixKeyAndHash(psk)     -> HKDF<96>(ikm=psk, salt=ck) -> (ck, hash, key)
  *
- * Then the NKpsk0 pattern: <- e, ee (msg2 from responder).
+ * Then the NKpsk0 pattern on msg1 from the initiator:
+ *   MixHash(e_pub_i), MixKey(e_pub_i), DecryptAndHash(tag1)
  *
- * Everything is logged: h, ck, k, nonce counter, and raw message bytes.
+ * And on msg2 to the initiator (Chromium's ProcessResponse expects):
+ *   MixHash(e_pub_r), MixKey(e_pub_r), MixKey(ee), EncryptAndHash(empty)
+ *
+ * Then Split(): HKDF2(ck, empty) gives (write_key, read_key).
  */
 class NoiseTunnelClient : HybridTransport.TunnelClient {
 
@@ -103,10 +107,9 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                 NoiseResponderChannel(ws, incoming, psk, eidPlaintext, peerIdentity65)
         }
     }
-    }
 
     private fun hexToBytes(s: String): ByteArray {
-        require(s.length % 2 == 0)
+        require(s.length % 2 == 0) { "odd hex length ${s.length}" }
         return ByteArray(s.length / 2) { i ->
             ((Character.digit(s[i * 2], 16) shl 4) or Character.digit(s[i * 2 + 1], 16)).toByte()
         }
@@ -133,7 +136,6 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         init {
             Log.d(TAG, "NoiseState init: psk           = ${hex(psk)}")
             Log.d(TAG, "NoiseState init: peerIdentity65 = ${hex(peerIdentity65)}")
-            Log.d(TAG, "NoiseState init: (eidPlaintext logged by channel)")
 
             // Init(kNKpsk0): ck = zeros || protocol_name; h = ck
             val nameBytes = PROTOCOL_NAME.toByteArray(Charsets.US_ASCII)
@@ -143,10 +145,9 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             Log.d(TAG, "init ck = ${hex(ck)}")
             Log.d(TAG, "init h  = ${hex(h)}")
 
-            // NKpsk0 responder uses prologue = 0x00 (Chromium RespondToHandshake,
-            // NKpsk0 branch uses 0x00.
+            // NKpsk0 branch uses prologue = 0x00.
             mixHash(byteArrayOf(0x00))
-            Log.d(TAG, "after MixHash([0x01]) h = ${hex(h)}")
+            Log.d(TAG, "after MixHash([0x00]) h = ${hex(h)}")
 
             // MixHash(peerIdentity65)
             mixHash(peerIdentity65)
@@ -181,7 +182,6 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
         fun encryptAndHash(plaintext: ByteArray): ByteArray {
             val nonceBytes = ByteArray(12)
-            // first 4 bytes BE counter
             nonceBytes[0] = ((nonce ushr 24) and 0xFF).toByte()
             nonceBytes[1] = ((nonce ushr 16) and 0xFF).toByte()
             nonceBytes[2] = ((nonce ushr 8) and 0xFF).toByte()
@@ -215,8 +215,8 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
     /**
      * Responder channel. On first receive(), reads msg1 (81 bytes: e_pub 65 + tag 16),
-     * processes it, sends msg2 (81 bytes: e_pub 65 + tag 16), then splits and enters
-     * transport mode. Subsequent receive()/send() use transport keys.
+     * processes it, sends msg2 (81 bytes: e_pub 65 + tag 16), then splits and
+     * enters transport mode. Subsequent receive()/send() use transport keys.
      */
     private inner class NoiseResponderChannel(
         private val ws: WebSocket,
@@ -245,9 +245,9 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             val record = incoming.poll(120, TimeUnit.SECONDS)
                 ?: throw HybridTransport.DeviceStageMissing("timeout waiting for transport record")
             Log.d(TAG, "transport recv record ${record.size} bytes")
-            // transport record: 2-byte BE length || ciphertext
             require(record.size >= 2) { "record too short" }
             val len = ((record[0].toInt() and 0xFF) shl 8) or (record[1].toInt() and 0xFF)
+            require(record.size >= 2 + len) { "record shorter than declared length" }
             val ct = record.copyOfRange(2, 2 + len)
             return decryptTransport(ct)
         }
@@ -276,28 +276,15 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             Log.d(TAG, "msg1 tag1 = ${hex(tag1)}")
             Log.d(TAG, "msg1 e_pub_i on curve: ${isOnCurve(ePubI)}")
 
-            // Responder generates its ephemeral
             val kpg = KeyPairGenerator.getInstance("EC")
             kpg.initialize(ECGenParameterSpec("secp256r1"))
             val ephR = kpg.generateKeyPair()
             val ephPubR = uncompressed(ephR.public as ECPublicKey)
             Log.d(TAG, "responder e_pub_r = ${hex(ephPubR)}")
 
-            // Process msg1 in the order the Noise pattern dictates:
-            //   1. MixHash(e_pub_i)          (e token)
-            //   2. DecryptAndHash(tag1)      (the payload after e)
-            // The ee DH belongs to msg2, NOT msg1, so it must not touch k before
-            // tag1 is authenticated. Getting this order wrong produces exactly
-            // the AEAD open failure we saw: decrypting with a key that was
-            // already advanced by MixKey(ee).
             noise.mixHash(ePubI)
             Log.d(TAG, "after MixHash(e_pub_i) h = ${hex(noise.h)}")
 
-            // Chromium's RespondToHandshake does, for the NKpsk0 branch:
-            //   noise.MixHash(peer_point_bytes);
-            //   noise.MixKey(peer_point_bytes);
-            //   // no es DH (identity is null)
-            //   noise.DecryptAndHash(ciphertext);
             noise.mixKey(ePubI)
             Log.d(TAG, "after MixKey(e_pub_i) ck = ${hex(noise.ck)}")
             Log.d(TAG, "after MixKey(e_pub_i) k  = ${hex(noise.k)}")
@@ -305,17 +292,9 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             val pt1 = noise.decryptAndHash(tag1)
             Log.d(TAG, "msg1 plaintext = ${hex(pt1)} (expected empty)")
 
-            // Build msg2: <- e, ee
-            //   1. MixHash(e_pub_r)          (e token)
-            //   2. ee = ECDH(eph_priv_r, e_pub_i); MixKey(ee)
-            //   3. EncryptAndHash(empty)     (payload)
             noise.mixHash(ephPubR)
             Log.d(TAG, "after MixHash(e_pub_r) h = ${hex(noise.h)}")
-            // Chromium's ProcessResponse does MixHash(e_pub_r), then
-            // MixKey(e_pub_r), then MixKey(ee). The MixKey(e_pub_r) was
-            // missing here, so the initiator's DecryptAndHash saw a different
-            // key than we used to encrypt tag2 and rejected msg2 with
-            // "Invalid caBLE handshake message".
+
             noise.mixKey(ephPubR)
             Log.d(TAG, "after MixKey(e_pub_r) ck = ${hex(noise.ck)}")
             Log.d(TAG, "after MixKey(e_pub_r) k  = ${hex(noise.k)}")
@@ -332,7 +311,6 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             Log.d(TAG, "msg2 ${msg2.size} bytes: ${hex(msg2)}")
             ws.send(okio.ByteString.of(*msg2))
 
-            // Split
             val (t, r) = noise.split()
             txKey = t
             rxKey = r
@@ -365,8 +343,6 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         /**
          * Decompress a 33-byte compressed P-256 point (prefix 0x02 or 0x03)
          * into a 65-byte uncompressed X9.62 point (0x04 || X || Y).
-         * Needed because the Noise handshake's peer identity is the 65-byte
-         * form, while the QR carries the 33-byte compressed form.
          */
         fun decompressPeerIdentity(compressed: ByteArray): ByteArray {
             require(compressed.size == 33) { "expected 33-byte compressed point, got ${compressed.size}" }
@@ -376,47 +352,33 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             val p = (params.curve.field as java.security.spec.ECFieldFp).p
             val a = params.curve.a
             val b = params.curve.b
-            val x = java.math.BigInteger(1, compressed.copyOfRange(1, 33))
-            val rhs = (x.modPow(java.math.BigInteger.TWO, p) * x + a * x + b).mod(p)
-            val exp = p.add(java.math.BigInteger.ONE).divide(java.math.BigInteger.valueOf(4))
+            val x = BigInteger(1, compressed.copyOfRange(1, 33))
+            val rhs = (x.modPow(BigInteger.TWO, p) * x + a * x + b).mod(p)
+            val exp = p.add(BigInteger.ONE).divide(BigInteger.valueOf(4))
             var y = rhs.modPow(exp, p)
-            // prefix 0x02 = even Y, 0x03 = odd Y
             if (y.testBit(0)) {
                 if (prefix == 0x02) y = p.subtract(y)
             } else {
                 if (prefix == 0x03) y = p.subtract(y)
             }
-            val xb = fixed(x.toByteArray(), 32)
-            val yb = fixed(y.toByteArray(), 32)
-            return byteArrayOf(0x04) + xb + yb
+            return byteArrayOf(0x04) + fixed(x.toByteArray(), 32) + fixed(y.toByteArray(), 32)
         }
 
-        // No statics. The channel is constructed by HybridTransport with
-        // the PSK and EID plaintext for that specific connection.
-
-        private fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
-
-        private fun hkdf2(ck: ByteArray, ikm: ByteArray): Pair<ByteArray, ByteArray> {
-            val out = hkdf(ikm, ck, ByteArray(0), 64)
-            return out.copyOfRange(0, 32) to out.copyOfRange(32, 64)
-        }
-
-        private fun hkdf96(ikm: ByteArray, salt: ByteArray): ByteArray = hkdf(ikm, salt, ByteArray(0), 96)
-
-        private fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
-            val mac = Mac.getInstance("HmacSHA256")
-            mac.init(SecretKeySpec(if (salt.isEmpty()) ByteArray(32) else salt, "HmacSHA256"))
-            val prk = mac.doFinal(ikm)
-            mac.init(SecretKeySpec(prk, "HmacSHA256"))
-            val out = ByteArray(len)
-            var t = ByteArray(0); var pos = 0; var counter = 1
-            while (pos < len) {
-                mac.reset(); mac.update(t); mac.update(info); mac.update(counter.toByte())
-                t = mac.doFinal()
-                val n = minOf(t.size, len - pos)
-                System.arraycopy(t, 0, out, pos, n); pos += n; counter++
-            }
-            return out
+        /**
+         * Return true if the 65-byte uncompressed point is on the P-256 curve.
+         */
+        fun isOnCurve(point65: ByteArray): Boolean {
+            if (point65.size != 65 || point65[0].toInt() != 0x04) return false
+            val params = p256Params()
+            val p = (params.curve.field as java.security.spec.ECFieldFp).p
+            val a = params.curve.a
+            val b = params.curve.b
+            val x = BigInteger(1, point65.copyOfRange(1, 33))
+            val y = BigInteger(1, point65.copyOfRange(33, 65))
+            if (x >= p || y >= p) return false
+            val lhs = y.modPow(BigInteger.TWO, p).mod(p)
+            val rhs = (x.modPow(BigInteger.valueOf(3), p) + a.multiply(x) + b).mod(p)
+            return lhs == rhs
         }
 
         private fun p256Params(): ECParameterSpec =
@@ -437,25 +399,6 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             return r
         }
 
-        /**
-         * Return true if the 65-byte uncompressed point is on the P-256 curve.
-         * If ePubI is not on the curve, MixHash(e_pub_i) will diverge from
-         * Chrome's and tag1 will fail AEAD authentication.
-         */
-        fun isOnCurve(point65: ByteArray): Boolean {
-            if (point65.size != 65 || point65[0].toInt() != 0x04) return false
-            val params = p256Params()
-            val p = (params.curve.field as java.security.spec.ECFieldFp).p
-            val a = params.curve.a
-            val b = params.curve.b
-            val x = java.math.BigInteger(1, point65.copyOfRange(1, 33))
-            val y = java.math.BigInteger(1, point65.copyOfRange(33, 65))
-            if (x >= p || y >= p) return false
-            val lhs = y.modPow(java.math.BigInteger.TWO, p).mod(p)
-            val rhs = (x.modPow(java.math.BigInteger.valueOf(3), p) + a.multiply(x) + b).mod(p)
-            return lhs == rhs
-        }
-
         private fun ecdh(priv: ECPrivateKey, peer65: ByteArray): ByteArray {
             require(peer65.size == 65 && peer65[0].toInt() == 0x04) { "expected uncompressed point" }
             val x = BigInteger(1, peer65.copyOfRange(1, 33))
@@ -467,6 +410,33 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             return ka.generateSecret()
         }
 
-        private fun hex(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
+        private fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
+
+        private fun hkdf2(ck: ByteArray, ikm: ByteArray): Pair<ByteArray, ByteArray> {
+            val out = hkdf(ikm, ck, ByteArray(0), 64)
+            return out.copyOfRange(0, 32) to out.copyOfRange(32, 64)
+        }
+
+        private fun hkdf96(ikm: ByteArray, salt: ByteArray): ByteArray = hkdf(ikm, salt, ByteArray(0), 96)
+
+        private fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(if (salt.isEmpty()) ByteArray(32) else salt, "HmacSHA256"))
+            val prk = mac.doFinal(ikm)
+            mac.init(SecretKeySpec(prk, "HmacSHA256"))
+            val out = ByteArray(len)
+            var t = ByteArray(0)
+            var pos = 0
+            var counter = 1
+            while (pos < len) {
+                mac.reset(); mac.update(t); mac.update(info); mac.update(counter.toByte())
+                t = mac.doFinal()
+                val n = minOf(t.size, len - pos)
+                System.arraycopy(t, 0, out, pos, n)
+                pos += n
+                counter++
+            }
+            return out
+        }
     }
 }
