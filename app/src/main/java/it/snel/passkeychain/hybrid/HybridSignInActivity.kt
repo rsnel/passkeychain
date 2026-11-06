@@ -4,16 +4,19 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import it.snel.passkeychain.store.PasskeyStore
 
 /**
- * A placeholder Activity that takes the scanned FIDO QR code,
- * initializes the BLE Advertiser, and starts broadcasting.
+ * Takes the scanned FIDO QR code, starts the BLE advertisement, then opens
+ * the caBLE v2 tunnel (WebSocket + Noise NKpsk0) on a background thread and
+ * runs the CTAP2 exchange via [HybridTransport.authenticate].
  */
 class HybridSignInActivity : ComponentActivity() {
 
     private val TAG = "HybridSignInActivity"
     private lateinit var bleAdvertiser: AndroidBleAdvertiser
     private lateinit var transport: HybridTransport
+    @Volatile private var worker: Thread? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,28 +30,38 @@ class HybridSignInActivity : ComponentActivity() {
 
         try {
             val qr = FidoQr.parse(qrText)
-            bleAdvertiser = AndroidBleAdvertiser(this)
-            
-            // We use a dummy TunnelClient because we haven't implemented it yet.
-            val dummyTunnel = object : HybridTransport.TunnelClient {
-                override fun connectAndHandshake(tunnelUrl: String, psk: ByteArray, peerIdentity: ByteArray): HybridTransport.TunnelClient.Channel {
-                    throw HybridTransport.DeviceStageMissing("Tunnel not implemented yet")
-                }
-            }
-            
-            transport = HybridTransport(bleAdvertiser, dummyTunnel)
-            
-            // For now, we only call deriveKeys and advertise to test the BLE.
-            val keys = transport.deriveKeys(qr)
             Log.d(TAG, "qr.peerPublicKey = " + qr.peerPublicKey.joinToString("") { "%02X".format(it) })
             Log.d(TAG, "qr.qrSecret      = " + qr.qrSecret.joinToString("") { "%02X".format(it) })
-            Log.d(TAG, "Starting BLE advertisement for QR: $qrText")
-            bleAdvertiser.advertise(java.util.UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), keys.eid)
-            
-            Toast.makeText(this, "Broadcasting BLE. Check Chrome Log.", Toast.LENGTH_LONG).show()
-            
+
+            val store = PasskeyStore(applicationContext)
+            val passkey = store.load().firstOrNull()
+            if (passkey == null) {
+                Toast.makeText(this, "Import a passkey first", Toast.LENGTH_LONG).show()
+                finish()
+                return
+            }
+
+            bleAdvertiser = AndroidBleAdvertiser(this)
+            transport = HybridTransport(bleAdvertiser, NoiseTunnelClient())
+
+            Log.d(TAG, "Starting hybrid authenticate() for QR: $qrText")
+            worker = Thread {
+                try {
+                    transport.authenticate(qr, passkey)
+                    Log.d(TAG, "authenticate() returned")
+                } catch (e: Exception) {
+                    Log.e(TAG, "authenticate() failed", e)
+                } finally {
+                    runOnUiThread {
+                        Toast.makeText(this, "Hybrid flow finished. See logcat.", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }.also { it.start() }
+
+            Toast.makeText(this, "Connecting to tunnel... Check Chrome Log.", Toast.LENGTH_LONG).show()
+
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting BLE", e)
+            Log.e(TAG, "Error starting hybrid flow", e)
             Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
             finish()
         }
