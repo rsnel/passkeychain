@@ -81,9 +81,16 @@ class HybridTransport(
      */
     private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
         val plaintextEid = ByteArray(16)
-        SecureRandom().nextBytes(plaintextEid) // 8-byte nonce at start
-        // We set routing ID to 0 for now (Chrome will connect to tunnel based on other data)
-        // The last 2 bytes remain 0 as required.
+        
+        // 1. Nonce (8 bytes) - Chrome uses 8-byte nonces for v2 EIDs
+        val nonce = ByteArray(8)
+        SecureRandom().nextBytes(nonce)
+        System.arraycopy(nonce, 0, plaintextEid, 0, 8)
+        
+        // 2. Routing ID (3 bytes) - Set to zero for now (Chrome will use tunnel ID)
+        // 3. Tunnel Server (3 bytes) - Set to zero for now
+        // 4. Last 2 bytes MUST be zero for Chrome to validate the decryption
+        // The array is initialized to zero, so we only need to explicitly set nonce.
         
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
@@ -93,7 +100,7 @@ class HybridTransport(
         mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
         val hmac = mac.doFinal(ciphertext)
         
-        // Return: 16-byte ciphertext + first 4 bytes of HMAC
+        // Return: 16-byte ciphertext + first 4 bytes of HMAC (Total 20 bytes)
         return ciphertext + hmac.copyOfRange(0, 4)
     }
 
