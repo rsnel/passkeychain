@@ -126,6 +126,10 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             private set
 
         init {
+            Log.d(TAG, "NoiseState init: psk           = ${hex(psk)}")
+            Log.d(TAG, "NoiseState init: peerIdentity65 = ${hex(peerIdentity65)}")
+            Log.d(TAG, "NoiseState init: eidPlaintext  = ${hex(STATIC_EID_PLAINTEXT)}")
+
             // Init(kKNpsk0): ck = zeros || protocol_name; h = ck
             val nameBytes = PROTOCOL_NAME.toByteArray(Charsets.US_ASCII)
             ck = ByteArray(32)
@@ -266,6 +270,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             val tag1 = msg1.copyOfRange(65, msg1.size)
             Log.d(TAG, "msg1 e_pub_i = ${hex(ePubI)}")
             Log.d(TAG, "msg1 tag1 = ${hex(tag1)}")
+            Log.d(TAG, "msg1 e_pub_i on curve: ${isOnCurve(ePubI)}")
 
             // Responder generates its ephemeral
             val kpg = KeyPairGenerator.getInstance("EC")
@@ -377,6 +382,10 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         // Set by HybridTransport before calling receive(). Ugly but pragmatic for now.
         @Volatile var STATIC_PEER_IDENTITY: ByteArray = ByteArray(65)
         @Volatile var STATIC_PSK: ByteArray = ByteArray(32)
+        // Diagnostic only: the 16-byte EID plaintext whose bytes are the salt
+        // for the PSK derivation. Logged so we can cross-check HybridTransport
+        // and NoiseState see the same bytes.
+        @Volatile var STATIC_EID_PLAINTEXT: ByteArray = ByteArray(16)
         // Responder's static P-256 private key, PKCS#8 DER. Used for the es DH
         // in msg1. Its public half is what the QR carries as peerPublicKey.
         @Volatile var STATIC_RESPONDER_PRIV: ByteArray? = null
@@ -422,6 +431,25 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             if (v.size > len) System.arraycopy(v, v.size - len, r, 0, len)
             else System.arraycopy(v, 0, r, len - v.size, v.size)
             return r
+        }
+
+        /**
+         * Return true if the 65-byte uncompressed point is on the P-256 curve.
+         * If ePubI is not on the curve, MixHash(e_pub_i) will diverge from
+         * Chrome's and tag1 will fail AEAD authentication.
+         */
+        fun isOnCurve(point65: ByteArray): Boolean {
+            if (point65.size != 65 || point65[0].toInt() != 0x04) return false
+            val params = p256Params()
+            val p = (params.curve.field as java.security.spec.ECFieldFp).p
+            val a = params.curve.a
+            val b = params.curve.b
+            val x = java.math.BigInteger(1, point65.copyOfRange(1, 33))
+            val y = java.math.BigInteger(1, point65.copyOfRange(33, 65))
+            if (x >= p || y >= p) return false
+            val lhs = y.modPow(java.math.BigInteger.TWO, p).mod(p)
+            val rhs = (x.modPow(java.math.BigInteger.valueOf(3), p) + a.multiply(x) + b).mod(p)
+            return lhs == rhs
         }
 
         private fun ecdh(priv: ECPrivateKey, peer65: ByteArray): ByteArray {
