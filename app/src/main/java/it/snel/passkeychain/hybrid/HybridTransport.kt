@@ -31,8 +31,14 @@ class HybridTransport(
          */
         fun connectNewTunnel(tunnelUrl: String): NewTunnel
         interface NewTunnel {
-            val routingId: ByteArray   // 3 bytes, from X-caBLE-Shard
-            val channel: Channel       // Noise transport, after handshake
+            val routingId: ByteArray   // 3 bytes, from X-Cable-Routing-Id
+            /**
+             * Build the Noise responder channel with the PSK and EID plaintext
+             * that authenticate() derived for THIS connection. Passing them
+             * explicitly avoids the shared companion statics that caused one
+             * authenticate() call to clobber another's inputs.
+             */
+            fun createChannel(psk: ByteArray, eidPlaintext: ByteArray, peerIdentity65: ByteArray): Channel
         }
         interface Channel {
             fun send(plaintext: ByteArray)
@@ -104,18 +110,7 @@ class HybridTransport(
         //    because the routing ID comes from the response headers.
         val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
 
-        // Inject peer identity so NoiseTunnelClient can build its state. PSK is
-        // injected after the EID plaintext exists, because the plaintext is its salt.
         val peer65 = it.snel.passkeychain.hybrid.NoiseTunnelClient.decompressPeerIdentity(qr.peerPublicKey)
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PEER_IDENTITY = peer65
-
-        // Responder's static keypair. Its public half is the QR's peerPublicKey;
-        // the private half is derived from qrSecret so both sides agree. Best-guess
-        // info label [4,0,0,0]; the next handshake run will confirm whether the
-        // es DH succeeds, by whether msg1 decrypts.
-        val staticPrivSeed = hkdf(qr.qrSecret, salt, byteArrayOf(4, 0, 0, 0), 32)
-        val staticPrivPkcs8 = p256PrivateKeyFromScalar(staticPrivSeed)
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_RESPONDER_PRIV = staticPrivPkcs8
 
         val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
         val routingId = newTunnel.routingId
@@ -124,8 +119,7 @@ class HybridTransport(
         val eidPlaintext = buildEidPlaintext(aesKey, hmacKey, routingId)
         // 3. Derive the Noise PSK: HKDF(qrSecret, salt=eidPlaintext, info=[3,0,0,0]).
         val psk = hkdf(qr.qrSecret, eidPlaintext, byteArrayOf(3, 0, 0, 0), 32)
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PSK = psk
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_EID_PLAINTEXT = eidPlaintext
+        android.util.Log.d("HybridTransport", "authenticate: routingId    = " + routingId.joinToString("") { "%02x".format(it) })
         android.util.Log.d("HybridTransport", "authenticate: eidPlaintext = " + eidPlaintext.joinToString("") { "%02x".format(it) })
         android.util.Log.d("HybridTransport", "authenticate: psk          = " + psk.joinToString("") { "%02x".format(it) })
         android.util.Log.d("HybridTransport", "authenticate: peerIdentity = " + peer65.joinToString("") { "%02x".format(it) })
@@ -134,8 +128,9 @@ class HybridTransport(
         ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), eid)
 
         try {
-            // 3. Wait for the Noise handshake + CTAP2 request on the already-open WebSocket.
-            val channel = newTunnel.channel
+            // 5. Build the channel with this connection's PSK and EID plaintext.
+            //    No statics, so concurrent authenticate() calls cannot interfere.
+            val channel = newTunnel.createChannel(psk, eidPlaintext, peer65)
             val request = channel.receive()
             val response = buildCtapResponse(request, passkey)
             channel.send(response)

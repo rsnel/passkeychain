@@ -93,18 +93,16 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         val routingId = hexToBytes(shardHeader.replace("-", ""))
         require(routingId.size == 3) { "routing ID must be 3 bytes, got ${routingId.size}" }
 
-        // Construct the channel lazily. NoiseResponderChannel reads
-        // STATIC_PSK and STATIC_EID_PLAINTEXT in its init; those statics are
-        // set by HybridTransport.authenticate() after connectNewTunnel
-        // returns. Constructing the channel here would freeze the zero
-        // defaults. Lazy construction defers init until authenticate()
-        // accesses newTunnel.channel, which is after the statics are set.
         return object : HybridTransport.TunnelClient.NewTunnel {
             override val routingId: ByteArray = routingId
-            override val channel: HybridTransport.TunnelClient.Channel by lazy {
-                NoiseResponderChannel(ws, incoming)
-            }
+            override fun createChannel(
+                psk: ByteArray,
+                eidPlaintext: ByteArray,
+                peerIdentity65: ByteArray,
+            ): HybridTransport.TunnelClient.Channel =
+                NoiseResponderChannel(ws, incoming, psk, eidPlaintext, peerIdentity65)
         }
+    }
     }
 
     private fun hexToBytes(s: String): ByteArray {
@@ -135,7 +133,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         init {
             Log.d(TAG, "NoiseState init: psk           = ${hex(psk)}")
             Log.d(TAG, "NoiseState init: peerIdentity65 = ${hex(peerIdentity65)}")
-            Log.d(TAG, "NoiseState init: eidPlaintext  = ${hex(STATIC_EID_PLAINTEXT)}")
+            Log.d(TAG, "NoiseState init: (eidPlaintext logged by channel)")
 
             // Init(kNKpsk0): ck = zeros || protocol_name; h = ck
             val nameBytes = PROTOCOL_NAME.toByteArray(Charsets.US_ASCII)
@@ -223,9 +221,12 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
     private inner class NoiseResponderChannel(
         private val ws: WebSocket,
         private val incoming: LinkedBlockingQueue<ByteArray>,
+        psk: ByteArray,
+        eidPlaintext: ByteArray,
+        peerIdentity65: ByteArray,
     ) : HybridTransport.TunnelClient.Channel {
 
-        private val noise: NoiseState
+        private val noise: NoiseState = NoiseState(peerIdentity65, psk)
         private var txKey: ByteArray? = null
         private var rxKey: ByteArray? = null
         private var txNonce = 0L
@@ -233,11 +234,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         private var handshakeDone = false
 
         init {
-            // We do not yet know peerIdentity or psk from inside the channel.
-            // Both are injected by HybridTransport via the NewTunnel interface
-            // in a real implementation; for now we read them from static fields
-            // that HybridTransport sets before calling receive().
-            noise = NoiseState(STATIC_PEER_IDENTITY, STATIC_PSK)
+            Log.d(TAG, "NoiseResponderChannel: eidPlaintext = ${hex(eidPlaintext)}")
         }
 
         override fun receive(): ByteArray {
@@ -394,16 +391,8 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             return byteArrayOf(0x04) + xb + yb
         }
 
-        // Set by HybridTransport before calling receive(). Ugly but pragmatic for now.
-        @Volatile var STATIC_PEER_IDENTITY: ByteArray = ByteArray(65)
-        @Volatile var STATIC_PSK: ByteArray = ByteArray(32)
-        // Diagnostic only: the 16-byte EID plaintext whose bytes are the salt
-        // for the PSK derivation. Logged so we can cross-check HybridTransport
-        // and NoiseState see the same bytes.
-        @Volatile var STATIC_EID_PLAINTEXT: ByteArray = ByteArray(16)
-        // Responder's static P-256 private key, PKCS#8 DER. Used for the es DH
-        // in msg1. Its public half is what the QR carries as peerPublicKey.
-        @Volatile var STATIC_RESPONDER_PRIV: ByteArray? = null
+        // No statics. The channel is constructed by HybridTransport with
+        // the PSK and EID plaintext for that specific connection.
 
         private fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
 
