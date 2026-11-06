@@ -87,7 +87,8 @@ class HybridTransport(
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 0, 8)
         
-        // Bytes 8-15 are zero (already initialized to 0)
+        // Explicitly zero bytes 8-15
+        for (i in 8 until 16) { plaintextEid[i] = 0 }
         
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
@@ -95,9 +96,9 @@ class HybridTransport(
         
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
-        val hmac = mac.doFinal(plaintextEid) // HMAC over plaintext!
+        val hmac = mac.doFinal(ciphertext) // HMAC over ciphertext
         
-        // Return: 16-byte ciphertext + first 4 bytes of HMAC (Total 20 bytes)
+        // Return: 16-byte ciphertext + first 4 bytes of HMAC
         return ciphertext + hmac.copyOfRange(0, 4)
     }
 
