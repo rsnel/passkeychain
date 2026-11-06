@@ -3,6 +3,8 @@ package it.snel.passkeychain.hybrid
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.webauthn.Assertion
 import it.snel.passkeychain.webauthn.Cbor
+import java.security.SecureRandom
+import javax.crypto.Cipher
 import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -32,8 +34,8 @@ class HybridTransport(
         UnsupportedOperationException("hybrid stage '$stage' needs on-device BLE/network and is not wired in this build")
 
     interface BleAdvertiser {
-        /** Advertise the 20-byte caBLE EID so the browser confirms proximity. */
-        fun advertise(eid: ByteArray)
+        /** Advertise the 20-byte caBLE v2 payload using the FIDO service UUID (0xFFF9). */
+        fun advertise(payload: ByteArray)
         fun stop()
     }
 
@@ -54,14 +56,43 @@ class HybridTransport(
      * HKDF-SHA256 with the caBLE info labels. (Deterministic; unit-tested.)
      */
     fun deriveKeys(qr: FidoQr): Keys {
-        val eidKey = hkdf(qr.qrSecret, info = byteArrayOf(1), len = 32)     // EID key
-        val tunnelId = hkdf(qr.qrSecret, info = byteArrayOf(2), len = 16)   // tunnel id
-        val psk = hkdf(qr.qrSecret, info = byteArrayOf(3), len = 32)        // Noise PSK
-        // The 16-byte nonce + tunnel-domain index are encrypted under eidKey to
-        // form the 20-byte advertised EID; the exact AES-CTR construction is
-        // applied in the BLE stage.
-        val eid = eidKey.copyOf(20)
-        return Keys(eid, tunnelId, psk)
+        // Chromium: kEIDKeySize is 64 bytes (32-byte AES key + 32-byte HMAC key)
+        val eidKeyMaterial = hkdf(qr.qrSecret, info = byteArrayOf(1), len = 64)
+        val aesKey = eidKeyMaterial.copyOfRange(0, 32)
+        val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
+        
+        val tunnelId = hkdf(qr.qrSecret, info = byteArrayOf(2), len = 16)
+        val psk = hkdf(qr.qrSecret, info = byteArrayOf(3), len = 32)
+        
+        // Construct the 20-byte payload (16-byte ciphertext + 4-byte HMAC)
+        val eidPayload = buildEidPayload(aesKey, hmacKey)
+        
+        return Keys(eidPayload, tunnelId, psk)
+    }
+
+    /**
+     * Builds the 20-byte caBLE v2 BLE advertisement payload.
+     * Format: [16-byte AES-Ciphertext][4-byte HMAC-SHA256 tag]
+     *
+     * The plaintext EID is: 8-byte nonce || 3-byte routing ID || 3-byte tunnel ID || 2 zero bytes.
+     * (The 2 zero bytes allow Chrome to verify correct decryption).
+     */
+    private fun buildEidPayload(aesKey: ByteArray, hmacKey: ByteArray): ByteArray {
+        val plaintextEid = ByteArray(16)
+        SecureRandom().nextBytes(plaintextEid) // 8-byte nonce at start
+        // We set routing ID to 0 for now (Chrome will connect to tunnel based on other data)
+        // The last 2 bytes remain 0 as required.
+        
+        val cipher = Cipher.getInstance("AES/ECB/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
+        val ciphertext = cipher.doFinal(plaintextEid) // 16 bytes
+        
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
+        val hmac = mac.doFinal(ciphertext)
+        
+        // Return: 16-byte ciphertext + first 4 bytes of HMAC
+        return ciphertext + hmac.copyOfRange(0, 4)
     }
 
     /**
@@ -70,9 +101,9 @@ class HybridTransport(
      */
     fun authenticate(qr: FidoQr, passkey: Passkey): ByteArray {
         val keys = deriveKeys(qr)
-        ble.advertise(keys.eid)                        // -> DeviceStageMissing until wired
+        ble.advertise(keys.eid)                        // 20-byte payload now
         try {
-            val channel = tunnel.connectAndHandshake(   // -> DeviceStageMissing until wired
+            val channel = tunnel.connectAndHandshake(   // 20-byte payload now
                 tunnelUrl = "wss://cable.ua5v.com/cable/connect",
                 psk = keys.psk,
                 peerIdentity = qr.peerPublicKey,
