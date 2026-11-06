@@ -1,5 +1,7 @@
 package it.snel.passkeychain.hybrid
 
+import java.util.UUID
+
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.webauthn.Assertion
 import it.snel.passkeychain.webauthn.Cbor
