@@ -329,6 +329,35 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
     }
 
     companion object {
+        /**
+         * Decompress a 33-byte compressed P-256 point (prefix 0x02 or 0x03)
+         * into a 65-byte uncompressed X9.62 point (0x04 || X || Y).
+         * Needed because the Noise handshake's peer identity is the 65-byte
+         * form, while the QR carries the 33-byte compressed form.
+         */
+        fun decompressPeerIdentity(compressed: ByteArray): ByteArray {
+            require(compressed.size == 33) { "expected 33-byte compressed point, got ${compressed.size}" }
+            val prefix = compressed[0].toInt() and 0xFF
+            require(prefix == 0x02 || prefix == 0x03) { "unexpected point prefix 0x%02x".format(prefix) }
+            val params = p256Params()
+            val p = (params.curve.field as java.security.spec.ECFieldFp).p
+            val a = params.curve.a
+            val b = params.curve.b
+            val x = java.math.BigInteger(1, compressed.copyOfRange(1, 33))
+            val rhs = (x.modPow(java.math.BigInteger.TWO, p) * x + a * x + b).mod(p)
+            val exp = p.add(java.math.BigInteger.ONE).divide(java.math.BigInteger.valueOf(4))
+            var y = rhs.modPow(exp, p)
+            // prefix 0x02 = even Y, 0x03 = odd Y
+            if (y.testBit(0)) {
+                if (prefix == 0x02) y = p.subtract(y)
+            } else {
+                if (prefix == 0x03) y = p.subtract(y)
+            }
+            val xb = fixed(x.toByteArray(), 32)
+            val yb = fixed(y.toByteArray(), 32)
+            return byteArrayOf(0x04) + xb + yb
+        }
+
         // Set by HybridTransport before calling receive(). Ugly but pragmatic for now.
         @Volatile var STATIC_PEER_IDENTITY: ByteArray = ByteArray(65)
         @Volatile var STATIC_PSK: ByteArray = ByteArray(32)
