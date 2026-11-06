@@ -314,6 +314,14 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             //   3. EncryptAndHash(empty)     (payload)
             noise.mixHash(ephPubR)
             Log.d(TAG, "after MixHash(e_pub_r) h = ${hex(noise.h)}")
+            // Chromium's ProcessResponse does MixHash(e_pub_r), then
+            // MixKey(e_pub_r), then MixKey(ee). The MixKey(e_pub_r) was
+            // missing here, so the initiator's DecryptAndHash saw a different
+            // key than we used to encrypt tag2 and rejected msg2 with
+            // "Invalid caBLE handshake message".
+            noise.mixKey(ephPubR)
+            Log.d(TAG, "after MixKey(e_pub_r) ck = ${hex(noise.ck)}")
+            Log.d(TAG, "after MixKey(e_pub_r) k  = ${hex(noise.k)}")
 
             val ee = ecdh(ephR.private as ECPrivateKey, ePubI)
             Log.d(TAG, "ee = ${hex(ee)}")
