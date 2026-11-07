@@ -14,8 +14,8 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.text.AnnotatedString
@@ -26,6 +26,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
@@ -424,7 +425,14 @@ class HybridSignInActivity : FragmentActivity() {
                     AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
                     Viewfinder()
                 } else if (still != null) {
-                    Magic(still, animate = !failed, approved = states[Step.Sign.ordinal] == State.Done)
+                    Magic(
+                        still,
+                        when {
+                            states[Step.Sign.ordinal] == State.Done -> Verdict.Approved
+                            failed -> Verdict.Denied
+                            else -> Verdict.Verifying
+                        },
+                    )
                 } else {
                     Column(
                         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primaryContainer),
@@ -514,31 +522,45 @@ class HybridSignInActivity : FragmentActivity() {
     /** A sparkle along the QR's edge: where on the perimeter (0..1), how far out, size, timing. */
     private class Sparkle(val along: Float, val out: Float, val size: Float, val phase: Float, val speed: Float)
 
+    /** What the stamp on the scanned code says. */
+    private enum class Verdict { Verifying, Approved, Denied }
+
     /**
-     * The frozen scan picture with a subtle "working on it" effect on the QR:
-     * the rest dims, the code gets a softly pulsing outline, a band of light
-     * sweeps across it and a few sparkles twinkle along its edges.
+     * The frozen scan picture with a "working on it" effect on the QR: the rest
+     * dims, the code gets a pulsing outline, a band of light sweeps across it,
+     * sparkles twinkle along its edges and a pulsing VERIFYING stamp sits on it.
+     * When the outcome is known the code flashes, a shockwave rings out and the
+     * stamp is replaced by a green APPROVED or, with a shake, a red DENIED.
      */
     @Composable
-    private fun Magic(f: Frozen, animate: Boolean, approved: Boolean) {
+    private fun Magic(f: Frozen, verdict: Verdict) {
         var time by remember { mutableFloatStateOf(0f) }
-        LaunchedEffect(animate, approved) {
-            if (!animate || approved) return@LaunchedEffect
+        LaunchedEffect(verdict) {
+            // the clock runs while verifying, and a little longer for the verdict's entrance
             val start = withFrameNanos { it } - (time * 1e9).toLong()
-            while (true) withFrameNanos { time = (it - start) / 1e9f }
+            val until = if (verdict == Verdict.Verifying) Float.MAX_VALUE else time + 1.5f
+            while (time < until) withFrameNanos { time = (it - start) / 1e9f }
+        }
+        // 0 -> 1 as the verdict lands
+        val land = remember { Animatable(1f) }
+        LaunchedEffect(verdict) {
+            if (verdict == Verdict.Verifying) return@LaunchedEffect
+            land.snapTo(0f)
+            land.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
         }
         val accent = MaterialTheme.colorScheme.primaryContainer
+        val ink = MaterialTheme.colorScheme.primary
         val gold = Color(0xFFFFD35C)
         val green = Color(0xFF1E9E5A)
-        // the stamp lands: from big and transparent to its size, quickly
-        val stamp by animateFloatAsState(if (approved) 1f else 0f, tween(280, easing = FastOutSlowInEasing), label = "stamp")
+        val red = Color(0xFFC62828)
         val textMeasurer = rememberTextMeasurer()
-        val stampText = remember(textMeasurer) {
-            textMeasurer.measure(
-                AnnotatedString("APPROVED"),
-                TextStyle(fontSize = 44.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp, color = green),
-            )
-        }
+        fun measure(word: String, colour: Color) = textMeasurer.measure(
+            AnnotatedString(word),
+            TextStyle(fontSize = 44.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp, color = colour),
+        )
+        val verifyingText = remember(textMeasurer, ink) { measure("VERIFYING", ink) }
+        val approvedText = remember(textMeasurer) { measure("APPROVED", green) }
+        val deniedText = remember(textMeasurer) { measure("DENIED", red) }
         val sparkles = remember(f) {
             val rnd = java.util.Random(7)
             List(12) { Sparkle(rnd.nextFloat(), 6f + 22f * rnd.nextFloat(), 5f + 6f * rnd.nextFloat(), rnd.nextFloat(), 0.35f + 0.4f * rnd.nextFloat()) }
@@ -551,32 +573,51 @@ class HybridSignInActivity : FragmentActivity() {
                 val q = f.quad.map { Offset(it.x * sx, it.y * sy) }
                 if (q.size < 4) return@Canvas
                 val code = Path().apply { moveTo(q[0].x, q[0].y); q.drop(1).forEach { lineTo(it.x, it.y) }; close() }
+                val bounds = code.getBounds()
+                val centre = bounds.center
+                val l = land.value
 
                 drawRect(Color.Black.copy(alpha = 0.4f))
                 drawPath(code, Color.Transparent, blendMode = BlendMode.Clear)
-                if (approved) {
-                    drawPath(code, green.copy(alpha = 0.9f), style = Stroke(3.dp.toPx(), join = StrokeJoin.Round))
-                    // a big green rubber stamp over the code
-                    val bounds = code.getBounds()
-                    val centre = bounds.center
+
+                /** A rubber stamp: [text] in a frame on a white backing, rotated, over the code. */
+                fun stamp(text: TextLayoutResult, colour: Color, factor: Float, alpha: Float, dx: Float = 0f) {
+                    if (alpha <= 0.01f) return
                     val pad = 10.dp.toPx()
-                    val w = stampText.size.width + 2 * pad
-                    val h = stampText.size.height + 2 * pad
-                    val fit = bounds.width * 0.95f / w
-                    val factor = fit * (1.8f - 0.8f * stamp)
-                    withTransform({ rotate(-14f, centre); scale(factor, factor, centre) }) {
-                        val topLeft = centre - Offset(w / 2, h / 2)
-                        drawRoundRect(Color.White.copy(alpha = 0.78f * stamp), topLeft, Size(w, h), CornerRadius(10.dp.toPx()))
+                    val w = text.size.width + 2 * pad
+                    val h = text.size.height + 2 * pad
+                    // one letter size for all three words, fitted to the longest
+                    val fit = bounds.width * 0.95f / (verifyingText.size.width + 2 * pad)
+                    val k = fit * factor
+                    val c = centre + Offset(dx, 0f)
+                    withTransform({ rotate(-14f, c); scale(k, k, c) }) {
+                        val topLeft = c - Offset(w / 2, h / 2)
+                        drawRoundRect(Color.White.copy(alpha = 0.78f * alpha), topLeft, Size(w, h), CornerRadius(10.dp.toPx()))
                         drawRoundRect(
-                            green.copy(alpha = stamp), topLeft, Size(w, h), CornerRadius(10.dp.toPx()),
+                            colour.copy(alpha = alpha), topLeft, Size(w, h), CornerRadius(10.dp.toPx()),
                             style = Stroke(4.dp.toPx() / fit),
                         )
-                        drawText(stampText, topLeft = centre - Offset(stampText.size.width / 2f, stampText.size.height / 2f), alpha = stamp)
+                        drawText(text, topLeft = c - Offset(text.size.width / 2f, text.size.height / 2f), alpha = alpha)
                     }
-                    return@Canvas
                 }
-                if (!animate) {
-                    drawPath(code, accent.copy(alpha = 0.6f), style = Stroke(2.dp.toPx(), join = StrokeJoin.Round))
+
+                if (verdict != Verdict.Verifying) {
+                    val colour = if (verdict == Verdict.Approved) green else red
+                    drawPath(code, colour.copy(alpha = 0.9f), style = Stroke(3.dp.toPx(), join = StrokeJoin.Round))
+                    if (l < 1f) {
+                        // a flash over the code and a shockwave ring in the verdict's colour
+                        drawPath(code, Color.White.copy(alpha = 0.85f * (1f - l) * (1f - l)))
+                        val reach = maxOf(bounds.width, bounds.height)
+                        drawCircle(
+                            colour.copy(alpha = 0.8f * (1f - l)), reach * (0.45f + 0.9f * l), centre,
+                            style = Stroke((10f * (1f - l) + 1f).dp.toPx()),
+                        )
+                        // the VERIFYING stamp blows away
+                        stamp(verifyingText, ink, 1f + 0.6f * l, (1f - l) * (1f - l))
+                    }
+                    // the verdict slams down; DENIED also shakes
+                    val shake = if (verdict == Verdict.Denied) sin(l * PI.toFloat() * 7f) * (1f - l) * 14.dp.toPx() else 0f
+                    stamp(if (verdict == Verdict.Approved) approvedText else deniedText, colour, 1.8f - 0.8f * l, l, shake)
                     return@Canvas
                 }
 
@@ -586,28 +627,27 @@ class HybridSignInActivity : FragmentActivity() {
                 drawPath(code, accent.copy(alpha = 0.55f + 0.4f * pulse), style = Stroke(2.5.dp.toPx(), join = StrokeJoin.Round))
 
                 // a band of light sweeping diagonally across the code
-                val b = code.getBounds()
                 val s = -0.4f + 1.8f * ((time / 2.4f) % 1f)
-                val c = Offset(b.left + b.width * s, b.top + b.height * s)
-                val d = Offset(b.width * 0.16f, b.height * 0.16f)
+                val c = Offset(bounds.left + bounds.width * s, bounds.top + bounds.height * s)
+                val d = Offset(bounds.width * 0.16f, bounds.height * 0.16f)
                 clipPath(code) {
                     drawRect(
                         Brush.linearGradient(
                             listOf(Color.Transparent, Color.White.copy(alpha = 0.32f), gold.copy(alpha = 0.18f), Color.Transparent),
                             start = c - d, end = c + d,
                         ),
-                        topLeft = b.topLeft, size = b.size,
+                        topLeft = bounds.topLeft, size = bounds.size,
                     )
                 }
 
                 // sparkles twinkling just outside the edges
-                val centre = Offset(q.sumOf { it.x.toDouble() }.toFloat() / 4, q.sumOf { it.y.toDouble() }.toFloat() / 4)
+                val mid = Offset(q.sumOf { it.x.toDouble() }.toFloat() / 4, q.sumOf { it.y.toDouble() }.toFloat() / 4)
                 for (sp in sparkles) {
                     val alpha = sin(2f * PI.toFloat() * (time * sp.speed + sp.phase)).coerceAtLeast(0f).let { it * it * it }
                     if (alpha < 0.02f) continue
                     val e = (sp.along * 4).toInt().coerceIn(0, 3); val t = sp.along * 4 - e
                     val onEdge = q[e] + (q[(e + 1) % 4] - q[e]) * t
-                    val dir = (onEdge - centre).let { it / it.getDistance().coerceAtLeast(1f) }
+                    val dir = (onEdge - mid).let { it / it.getDistance().coerceAtLeast(1f) }
                     val at = onEdge + dir * sp.out.dp.toPx()
                     val r = sp.size.dp.toPx() * (0.6f + 0.4f * alpha)
                     val k = r * 0.22f
@@ -617,6 +657,10 @@ class HybridSignInActivity : FragmentActivity() {
                     }
                     drawPath(star, (if (sp.phase > 0.5f) gold else Color.White).copy(alpha = 0.85f * alpha))
                 }
+
+                // the pulsing VERIFYING stamp, on top of the shimmer
+                val beat = 0.5f + 0.5f * sin(time * 2f * PI.toFloat() / 1.1f)
+                stamp(verifyingText, ink, 0.97f + 0.06f * beat, 0.55f + 0.45f * beat)
             }
         }
     }
