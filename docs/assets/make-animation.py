@@ -177,8 +177,11 @@ def computer_screen(qr_line):
     return ''.join(out)
 
 def phone_screen():
-    """PassKeyChain on the phone: the scanned QR above, the eight steps below, live"""
-    a8 = arrival8()
+    """PassKeyChain on the phone: the scanned QR above, the eight steps below, live.
+    The phone is done as soon as it has sent the signature: it never hears whether
+    the website accepted it, so it turns green at the start of step 8; only the
+    computer waits for the signature to arrive."""
+    sent = WIN[8][0] + .3
     o = ["<g transform='rotate(-10 712 300)'>",
          "<rect x='684' y='250' width='56' height='102' rx='11' fill='#2D2F45'/>",
          "<rect x='689' y='258' width='46' height='86' rx='6' fill='#F7F5FF'/>",
@@ -192,14 +195,14 @@ def phone_screen():
     o.append(q + "</g>")
     # the stamp's frame around the QR: yellow while verifying, green when approved
     o.append(f"<rect x='700' y='266' width='24' height='24' rx='3' fill='none' stroke='{YELLOW_}' stroke-width='1.8' opacity='0'>"
-             f"{between(WIN[2][0], a8, .1)}</rect>")
+             f"{between(WIN[2][0], sent, .1)}</rect>")
     o.append(f"<rect x='700' y='266' width='24' height='24' rx='3' fill='none' stroke='{GREEN_}' stroke-width='1.8' opacity='0'>"
-             f"{between(a8, END, .1)}</rect>")
+             f"{between(sent, END, .1)}</rect>")
     # the checklist: grey, yellow while busy, green when done
     for i in range(1, 9):
         y = 303 + (i-1)*5.1
         s0, e0 = WIN[i]
-        if i == 8: e0 = a8
+        if i == 8: e0 = sent
         if s0 > 0:
             vals, kts = f"{GREY};{YELLOW_};{GREEN_};{GREY}", f"0;{f(s0)};{f(e0)};{f(END)}"
         else:
