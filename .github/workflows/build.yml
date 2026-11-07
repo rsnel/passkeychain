@@ -68,6 +68,10 @@ jobs:
           } >> "$GITHUB_ENV"
 
       # the unit tests (which re-verify the crypto core) run against debug
+      - name: Tunnel server tests
+        working-directory: server
+        run: python3 -m unittest -v
+
       - name: Unit tests and APK
         run: |
           set -o pipefail
