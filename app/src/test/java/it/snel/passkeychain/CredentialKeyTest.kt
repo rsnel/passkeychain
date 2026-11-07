@@ -4,7 +4,9 @@ import it.snel.passkeychain.hybrid.FidoQr
 import it.snel.passkeychain.hybrid.CtapAuthenticator
 import it.snel.passkeychain.hybrid.CtapAuthenticator.Decision
 import it.snel.passkeychain.hybrid.HybridTransport
+import it.snel.passkeychain.io.Argon2id
 import it.snel.passkeychain.io.Bitwarden
+import it.snel.passkeychain.io.BitwardenEncrypted
 import it.snel.passkeychain.util.B64
 import it.snel.passkeychain.webauthn.Assertion
 import it.snel.passkeychain.webauthn.Cbor
@@ -345,5 +347,71 @@ class CredentialKeyTest {
         val (priv, _) = freshKey()
         val wrong = pkWith(priv, ByteArray(16) { 1 }, rpId = "github.com")
         CtapAuthenticator.handle(getAssertion("login.microsoft.com", cdh, emptyList())) { Decision.Sign(wrong) }
+    }
+
+    // ---- Bitwarden password-protected (encrypted) export ---------------------------
+
+    private fun ub(vararg x: Int) = ByteArray(x.size) { x[it].toByte() }
+
+    /** Known answers from bitwarden/sdk-internal (crates/bitwarden-crypto/src/keys/kdf.rs, util.rs). */
+    @Test fun bitwardenKdfVectors() {
+        val pw = "67t9b5g67\$%Dh89n".toByteArray()
+        assertArrayEquals(
+            ub(31, 79, 104, 226, 150, 71, 177, 90, 194, 80, 172, 209, 17, 129, 132, 81, 138, 167, 69, 167, 254, 149, 2, 27, 39, 197, 64, 42, 22, 195, 86, 75),
+            BitwardenEncrypted.pbkdf2Sha256(pw, "test_key".toByteArray(), 10000, 32),
+        )
+        assertArrayEquals(
+            ub(207, 240, 225, 177, 162, 19, 163, 76, 98, 106, 179, 175, 224, 9, 17, 240, 20, 147, 237, 47, 246, 150, 141, 184, 62, 225, 131, 242, 51, 53, 225, 242),
+            Argon2id.hash(pw, MessageDigest.getInstance("SHA-256").digest("test_key".toByteArray()), 4, 32 * 1024, 2, 32),
+        )
+        val prk = ub(23, 152, 120, 41, 214, 16, 156, 133, 71, 226, 178, 135, 208, 255, 66, 101, 189, 70, 173, 30, 39, 215, 175, 236, 38, 180, 180, 62, 196, 4, 159, 70)
+        assertArrayEquals(
+            ub(6, 114, 42, 38, 87, 231, 30, 109, 30, 255, 104, 129, 255, 94, 92, 108, 124, 145, 215, 208, 17, 60, 135, 22, 70, 158, 40, 53, 45, 182, 8, 63,
+                65, 87, 239, 234, 185, 227, 153, 122, 115, 205, 144, 56, 102, 149, 92, 139, 217, 102, 119, 57, 37, 57, 251, 178, 18, 52, 94, 77, 132, 215, 239, 100),
+            BitwardenEncrypted.hkdfExpand(prk, "info".toByteArray(), 64),
+        )
+    }
+
+    @Test fun encryptedExportRoundTrip() {
+        val (priv, _) = freshKey()
+        val inner = bitwardenExport(bitwardenCredential(priv, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"))
+        val file = BitwardenEncrypted.encrypt(inner, "corréct horse", iterations = 5000) // fast for the test
+        assertTrue(BitwardenEncrypted.isEncrypted(file) && BitwardenEncrypted.isPasswordProtected(file))
+        assertTrue("nothing readable in the file", !file.contains("login.microsoft.com") && !file.contains("r.snel"))
+        val doc = JSONObject(file)
+        assertEquals(0, doc.getInt("kdfType"))
+        assertTrue(doc.getString("data").startsWith("2."))
+        val back = BitwardenEncrypted.decrypt(file, "corréct horse")
+        assertEquals(inner, back)
+        assertEquals(priv.s, CredentialKey.decodePrivate(Bitwarden.parse(back).imported.single().keyValuePkcs8).s)
+    }
+
+    @Test(expected = BitwardenEncrypted.WrongPassword::class)
+    fun encryptedExportWrongPassword() {
+        BitwardenEncrypted.decrypt(BitwardenEncrypted.encrypt("{}", "right password", iterations = 5000), "wrong password")
+    }
+
+    @Test fun tamperedDataIsRejected() {
+        val doc = JSONObject(BitwardenEncrypted.encrypt("{\"items\":[]}", "pw-12345", iterations = 5000))
+        val parts = doc.getString("data").removePrefix("2.").split("|").toMutableList()
+        val ct = java.util.Base64.getDecoder().decode(parts[1]); ct[0] = (ct[0].toInt() xor 1).toByte()
+        parts[1] = java.util.Base64.getEncoder().encodeToString(ct)
+        doc.put("data", "2." + parts.joinToString("|"))
+        val err = runCatching { BitwardenEncrypted.decrypt(doc.toString(), "pw-12345") }.exceptionOrNull()
+        assertTrue("authentication must fail, not the password check: $err", err != null && err !is BitwardenEncrypted.WrongPassword)
+    }
+
+    @Test fun accountRestrictedAndHostileKdfAreRefused() {
+        val restricted = """{"encrypted":true,"passwordProtected":false,"encKeyValidation_DO_NOT_EDIT":"2.x|y|z","data":"2.x|y|z"}"""
+        assertTrue(BitwardenEncrypted.isEncrypted(restricted) && !BitwardenEncrypted.isPasswordProtected(restricted))
+        assertTrue(runCatching { BitwardenEncrypted.decrypt(restricted, "x") }.exceptionOrNull() is BitwardenEncrypted.Unsupported)
+        for (kdf in listOf(
+            """"kdfType":0,"kdfIterations":100""",
+            """"kdfType":1,"kdfIterations":3,"kdfMemory":4096,"kdfParallelism":4""",
+            """"kdfType":7,"kdfIterations":3""",
+        )) {
+            val f = """{"encrypted":true,"passwordProtected":true,"salt":"c2FsdA==",$kdf,"encKeyValidation_DO_NOT_EDIT":"2.x|y|z","data":"2.x|y|z"}"""
+            assertTrue(kdf, runCatching { BitwardenEncrypted.decrypt(f, "x") }.exceptionOrNull() is BitwardenEncrypted.Unsupported)
+        }
     }
 }

@@ -131,9 +131,9 @@ class HybridTransport(
         val psk = hkdf(qr.qrSecret, eidPlaintext, byteArrayOf(3, 0, 0, 0), 32)
         it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PSK = psk
         it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_EID_PLAINTEXT = eidPlaintext
-        android.util.Log.d("HybridTransport", "authenticate: eidPlaintext = " + eidPlaintext.joinToString("") { "%02x".format(it) })
-        android.util.Log.d("HybridTransport", "authenticate: psk          = " + psk.joinToString("") { "%02x".format(it) })
-        android.util.Log.d("HybridTransport", "authenticate: peerIdentity = " + peer65.joinToString("") { "%02x".format(it) })
+        it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: eidPlaintext = " + eidPlaintext.joinToString("") { "%02x".format(it) })
+        it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: psk          = " + psk.joinToString("") { "%02x".format(it) })
+        it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: peerIdentity = " + peer65.joinToString("") { "%02x".format(it) })
         // 4. Encrypt the EID and advertise it.
         val eid = encryptEid(aesKey, hmacKey, eidPlaintext)
         ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), eid)

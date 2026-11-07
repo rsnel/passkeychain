@@ -88,8 +88,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import it.snel.passkeychain.R
 import it.snel.passkeychain.camera.QrScanActivity
-import it.snel.passkeychain.hybrid.FidoQr
 import it.snel.passkeychain.io.Bitwarden
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import it.snel.passkeychain.BuildConfig
+import it.snel.passkeychain.io.BitwardenEncrypted
+import it.snel.passkeychain.util.Dbg
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.store.PasskeyStore
 import it.snel.passkeychain.store.UserUnlock
@@ -117,7 +125,17 @@ private sealed interface UpdateUi {
     data class Downloading(val release: UpdateChecker.Release, val percent: Int) : UpdateUi
 }
 
-private data class ScanResult(val title: String, val text: String, val recognized: Boolean)
+/** An encrypted backup that is waiting for its password. */
+private data class PendingImport(val text: String, val error: String? = null)
+
+/** Imports an unencrypted Bitwarden JSON export; returns the message to show. */
+private fun importJson(store: PasskeyStore, text: String): String {
+    val res = Bitwarden.parse(text)
+    res.imported.forEach { store.upsert(it) }
+    val n = res.imported.size
+    return (if (n == 1) "Imported 1 passkey" else "Imported $n passkeys") +
+        if (res.skipped.isNotEmpty()) ", skipped ${res.skipped.size}" else ""
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,8 +150,12 @@ private fun MainScreen(store: PasskeyStore) {
     var menuOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Passkey?>(null) }
     var update by remember { mutableStateOf<UpdateUi?>(null) }
-    var scan by remember { mutableStateOf<ScanResult?>(null) }
     var about by remember { mutableStateOf(false) }
+    var exportChoice by remember { mutableStateOf(false) }
+    var exportPassword by remember { mutableStateOf<String?>(null) } // null: unencrypted
+    var pendingImport by remember { mutableStateOf<PendingImport?>(null) }
+    var busy by remember { mutableStateOf<String?>(null) }
+    var debugLogging by remember { mutableStateOf(Dbg.enabled) }
 
     LaunchedEffect(Unit) {
         passkeys = withContext(Dispatchers.IO) { store.load() }
@@ -146,46 +168,41 @@ private fun MainScreen(store: PasskeyStore) {
             val msg = withContext(Dispatchers.IO) {
                 runCatching {
                     val text = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
-                    val res = Bitwarden.parse(text)
-                    res.imported.forEach { store.upsert(it) }
-                    passkeys = store.load()
-                    val n = res.imported.size
-                    (if (n == 1) "Imported 1 passkey" else "Imported $n passkeys") +
-                        if (res.skipped.isNotEmpty()) ", skipped ${res.skipped.size}" else ""
+                    when {
+                        BitwardenEncrypted.isPasswordProtected(text) -> { pendingImport = PendingImport(text); null }
+                        BitwardenEncrypted.isEncrypted(text) ->
+                            "This is an \"account restricted\" Bitwarden export, which only Bitwarden can read. " +
+                                "Export again as .json (Encrypted) with export type \"Password protected\"."
+                        else -> importJson(store, text).also { passkeys = store.load() }
+                    }
                 }.getOrElse { "Import failed: ${it.message}" }
             }
-            snackbar.showSnackbar(msg)
+            msg?.let { snackbar.showSnackbar(it) }
         }
     }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+        if (uri == null) { exportPassword = null; return@rememberLauncherForActivityResult }
         scope.launch {
             val msg = withContext(Dispatchers.IO) {
                 runCatching {
                     val all = store.load()
-                    ctx.contentResolver.openOutputStream(uri)!!.use { it.write(Bitwarden.export(all).toByteArray()) }
-                    if (all.size == 1) "Exported 1 passkey" else "Exported ${all.size} passkeys"
+                    val password = exportPassword
+                    val content = if (password != null) {
+                        busy = "Encrypting the backup…"
+                        withContext(Dispatchers.Default) { BitwardenEncrypted.encrypt(Bitwarden.export(all), password) }
+                    } else Bitwarden.export(all)
+                    ctx.contentResolver.openOutputStream(uri)!!.use { it.write(content.toByteArray()) }
+                    (if (all.size == 1) "Exported 1 passkey" else "Exported ${all.size} passkeys") +
+                        if (password != null) ", encrypted" else ""
                 }.getOrElse { "Export failed: ${it.message}" }
             }
+            busy = null
+            exportPassword = null
             snackbar.showSnackbar(msg)
         }
     }
-    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-        if (res.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
-        val qr = res.data?.getStringExtra(QrScanActivity.RESULT_QR) ?: return@rememberLauncherForActivityResult
-        scan = if (FidoQr.isFidoQr(qr)) {
-            runCatching {
-                val f = FidoQr.parse(qr)
-                ScanResult(
-                    "Sign-in QR recognized",
-                    "This is a passkey sign-in request (" +
-                        (if (f.hint == "mc") "create a passkey" else "sign in with a passkey") +
-                        ").\n\nSigning in on another device this way isn't supported yet.",
-                    recognized = true,
-                )
-            }.getOrElse { ScanResult("Unreadable sign-in QR", "This looks like a passkey QR, but it could not be decoded: ${it.message}", false) }
-        } else ScanResult("Not a sign-in QR", qr.take(160), false)
-    }
+    // the scanner hands a sign-in QR straight to HybridSignInActivity
+    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
     val openImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -221,8 +238,8 @@ private fun MainScreen(store: PasskeyStore) {
                                 UserUnlock.prompt(
                                     activity,
                                     title = "Export passkeys",
-                                    description = "The export file contains all your private keys, unencrypted. Keep it safe and delete it when you no longer need it.",
-                                    onSuccess = { exportLauncher.launch("passkeychain-bitwarden.json") },
+                                    description = "An export gives access to all your passkeys.",
+                                    onSuccess = { exportChoice = true },
                                     onError = { cancelled, message -> if (!cancelled) scope.launch { snackbar.showSnackbar(message) } },
                                 )
                             },
@@ -237,6 +254,18 @@ private fun MainScreen(store: PasskeyStore) {
                                 scope.launch { update = UpdateUi.Result(updater.check()) }
                             },
                         )
+                        if (BuildConfig.DEBUG) {
+                            DropdownMenuItem(
+                                text = { Text("Debug logging") },
+                                leadingIcon = { Icon(Icons.Rounded.Info, null) },
+                                trailingIcon = { Checkbox(checked = debugLogging, onCheckedChange = null) },
+                                onClick = {
+                                    debugLogging = !debugLogging
+                                    Dbg.setEnabled(ctx, debugLogging)
+                                    scope.launch { snackbar.showSnackbar(if (debugLogging) "Debug logging on (may log key material)" else "Debug logging off") }
+                                },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("About") },
                             leadingIcon = { Icon(Icons.Rounded.Info, null) },
@@ -293,15 +322,47 @@ private fun MainScreen(store: PasskeyStore) {
         )
     }
 
-    scan?.let { s ->
-        AlertDialog(
-            onDismissRequest = { scan = null },
-            icon = { Icon(AppIcons.QrCode2, null) },
-            title = { Text(s.title) },
-            text = { Text(s.text) },
-            confirmButton = { TextButton(onClick = { scan = null }) { Text("OK") } },
+    if (exportChoice) ExportDialog(
+        onDismiss = { exportChoice = false },
+        onExport = { password ->
+            exportChoice = false
+            exportPassword = password
+            exportLauncher.launch(if (password != null) "passkeychain-bitwarden-encrypted.json" else "passkeychain-bitwarden.json")
+        },
+    )
+
+    pendingImport?.let { p ->
+        ImportPasswordDialog(
+            p,
+            onDismiss = { pendingImport = null },
+            onDecrypt = { password ->
+                pendingImport = p.copy(error = null)
+                busy = "Decrypting the backup…"
+                scope.launch {
+                    val result = withContext(Dispatchers.Default) {
+                        runCatching { BitwardenEncrypted.decrypt(p.text, password) }
+                    }
+                    busy = null
+                    result.fold(
+                        onSuccess = { inner ->
+                            pendingImport = null
+                            val msg = withContext(Dispatchers.IO) {
+                                runCatching { importJson(store, inner).also { passkeys = store.load() } }
+                                    .getOrElse { "Import failed: ${it.message}" }
+                            }
+                            snackbar.showSnackbar(msg)
+                        },
+                        onFailure = { e ->
+                            if (e is BitwardenEncrypted.WrongPassword) pendingImport = p.copy(error = "Wrong password")
+                            else { pendingImport = null; snackbar.showSnackbar("Import failed: ${e.message}") }
+                        },
+                    )
+                }
+            },
         )
     }
+
+    busy?.let { BusyDialog(it) }
 
     if (about) AboutDialog(updater.currentLabel, onDismiss = { about = false })
 }
@@ -596,5 +657,108 @@ private fun AboutDialog(version: String, onDismiss: () -> Unit) {
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+    )
+}
+
+@Composable
+private fun ExportDialog(onDismiss: () -> Unit, onExport: (password: String?) -> Unit) {
+    var encrypted by remember { mutableStateOf(true) }
+    var password by remember { mutableStateOf("") }
+    var repeat by remember { mutableStateOf("") }
+    val problem = when {
+        !encrypted -> null
+        password.length < 8 -> "At least 8 characters"
+        repeat != password -> "The passwords differ"
+        else -> null
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(AppIcons.FileUpload, null) },
+        title = { Text("Export passkeys") },
+        text = {
+            Column {
+                Text(
+                    "In Bitwarden's format, so Bitwarden can import it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth().clickable { encrypted = true }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = encrypted, onClick = { encrypted = true })
+                    Text("Encrypted with a password (recommended)")
+                }
+                Row(Modifier.fillMaxWidth().clickable { encrypted = false }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = !encrypted, onClick = { encrypted = false })
+                    Text("Unencrypted")
+                }
+                if (encrypted) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = password, onValueChange = { password = it }, label = { Text("Password") },
+                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = repeat, onValueChange = { repeat = it }, label = { Text("Repeat password") },
+                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+                        isError = problem != null && repeat.isNotEmpty(),
+                        supportingText = { Text(problem ?: "Bitwarden asks for this password when importing.") },
+                    )
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Anyone who gets the file can use all your passkeys. Delete it as soon as you no longer need it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = problem == null, onClick = { onExport(if (encrypted) password else null) }) { Text("Export") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ImportPasswordDialog(p: PendingImport, onDismiss: () -> Unit, onDecrypt: (String) -> Unit) {
+    var password by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Lock, null) },
+        title = { Text("Encrypted backup") },
+        text = {
+            Column {
+                Text("Enter the password this Bitwarden backup was exported with.")
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it }, label = { Text("Password") },
+                    singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+                    isError = p.error != null,
+                    supportingText = if (p.error != null) { { Text(p.error) } } else null,
+                )
+            }
+        },
+        confirmButton = { TextButton(enabled = password.isNotEmpty(), onClick = { onDecrypt(password) }) { Text("Import") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun BusyDialog(text: String) {
+    AlertDialog(
+        onDismissRequest = {},
+        text = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(32.dp))
+                Spacer(Modifier.width(20.dp))
+                Text(text)
+            }
+        },
+        confirmButton = {},
     )
 }

@@ -7,7 +7,7 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.content.Context
 import android.os.ParcelUuid
-import android.util.Log
+import it.snel.passkeychain.util.Dbg
 import java.util.UUID
 
 /**
@@ -23,13 +23,13 @@ class AndroidBleAdvertiser(private val context: Context) : HybridTransport.BleAd
 
     override fun advertise(serviceUuid: UUID, payload: ByteArray) {
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
-            Log.e(TAG, "Bluetooth is not available or enabled.")
+            Dbg.e(TAG, "Bluetooth is not available or enabled.")
             throw HybridTransport.DeviceStageMissing("Bluetooth not available")
         }
 
         advertiser = bluetoothAdapter.bluetoothLeAdvertiser
         if (advertiser == null) {
-            Log.e(TAG, "BLE Advertising is not supported on this device.")
+            Dbg.e(TAG, "BLE Advertising is not supported on this device.")
             throw HybridTransport.DeviceStageMissing("BLE Advertising not supported")
         }
 
@@ -49,22 +49,22 @@ class AndroidBleAdvertiser(private val context: Context) : HybridTransport.BleAd
             .build()
 
         val hexString = fullPayload.joinToString("") { String.format("%02X", it) }
-        Log.d(TAG, "Starting BLE advertisement with UUID $serviceUuid")
-        Log.d(TAG, "Advertising payload hex: $hexString (size: ${fullPayload.size})")
+        Dbg.d(TAG, "Starting BLE advertisement with UUID $serviceUuid")
+        Dbg.d(TAG, "Advertising payload hex: $hexString (size: ${fullPayload.size})")
         
         advertiser?.startAdvertising(settings, data, object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                Log.i(TAG, "BLE advertisement started successfully.")
+                Dbg.i(TAG, "BLE advertisement started successfully.")
             }
 
             override fun onStartFailure(errorCode: Int) {
-                Log.e(TAG, "BLE advertisement failed to start. Error code: $errorCode")
+                Dbg.e(TAG, "BLE advertisement failed to start. Error code: $errorCode")
             }
         })
     }
 
     override fun stop() {
-        Log.d(TAG, "Stopping BLE advertisement.")
+        Dbg.d(TAG, "Stopping BLE advertisement.")
         advertiser?.stopAdvertising(object : AdvertiseCallback() {})
         advertiser = null
     }

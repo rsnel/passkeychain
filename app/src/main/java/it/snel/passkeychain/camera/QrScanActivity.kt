@@ -3,7 +3,7 @@ package it.snel.passkeychain.camera
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Log
+import it.snel.passkeychain.util.Dbg
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -109,7 +109,7 @@ class QrScanActivity : ComponentActivity() {
                 val qr = codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue
                 if (qr != null && !delivered) { delivered = true; finishWith(qr) }
             }
-            .addOnFailureListener { Log.w("QrScan", "barcode error", it) }
+            .addOnFailureListener { Dbg.w("QrScan", "barcode error", it) }
             .addOnCompleteListener { proxy.close() }
     }
 

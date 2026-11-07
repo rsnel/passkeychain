@@ -102,6 +102,19 @@ login items:
 
 A throwaway example (dummy key) is at [`docs/sample-passkey.json`](docs/sample-passkey.json).
 
+**Encrypted backups.** PassKeyChain reads and writes Bitwarden's
+*password protected* encrypted export (Bitwarden: Export vault → .json
+(Encrypted) → Password protected), so passkeys never have to exist as a plain
+file. The password goes through PBKDF2-SHA256 (600,000 iterations when
+PassKeyChain exports; files from Bitwarden may also use Argon2id, implemented
+in pure Kotlin), is stretched with HKDF into an AES-256-CBC key and an
+HMAC-SHA256 key, and the export is stored as Bitwarden's type-2 EncString
+(`io/BitwardenEncrypted.kt`, tested against Bitwarden's own KDF test vectors).
+"Account restricted" Bitwarden exports can only be read by Bitwarden itself.
+
+**Logging.** Nothing is logged unless "Debug logging" is switched on in the
+menu, which only exists in debug builds (some messages contain key material).
+
 **Careful:** an unencrypted export contains all your private keys (and, from
 Bitwarden, your passwords too). Delete it once it is imported.
 

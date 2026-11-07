@@ -31,9 +31,11 @@
 
         <!-- not recreated on rotation: that would restart the tunnel and lose the unlock -->
         <activity android:name=".hybrid.HybridSignInActivity" android:exported="false"
+            android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
         <activity
             android:name=".ui.MainActivity"
+            android:screenOrientation="portrait"
             android:exported="true"
             android:theme="@style/Theme.PassKeyChain">
             <intent-filter>

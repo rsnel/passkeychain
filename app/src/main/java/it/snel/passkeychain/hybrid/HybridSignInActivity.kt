@@ -1,7 +1,8 @@
 package it.snel.passkeychain.hybrid
 
 import android.os.Bundle
-import android.util.Log
+import android.widget.Toast
+import it.snel.passkeychain.util.Dbg
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -22,7 +23,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,7 +74,6 @@ class HybridSignInActivity : FragmentActivity() {
         class Choose(val request: GetAssertionRequest, val candidates: List<Passkey>) : Ui
         class Unlocking(val passkey: Passkey) : Ui
         class Signing(val passkey: Passkey) : Ui
-        class Done(val passkey: Passkey) : Ui
         class Failed(val title: String, val message: String) : Ui
     }
 
@@ -103,10 +102,16 @@ class HybridSignInActivity : FragmentActivity() {
         Thread({
             try {
                 transport.authenticate(qr) { request -> choose(request) }
-                Log.d(TAG, "authenticate() returned")
-                runOnUiThread { (ui as? Ui.Signing)?.let { ui = Ui.Done(it.passkey) } }
+                Dbg.d(TAG, "authenticate() returned")
+                runOnUiThread {
+                    // signed: back to the start screen, with a short confirmation
+                    (ui as? Ui.Signing)?.let {
+                        Toast.makeText(applicationContext, "Signed in on your computer as ${it.passkey.label}", Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "authenticate() failed", e)
+                Dbg.e(TAG, "authenticate() failed", e)
                 runOnUiThread {
                     // a refusal or "no passkey" already shows its own message
                     if (ui !is Ui.Failed) ui = Ui.Failed("Sign-in failed", e.message ?: e.javaClass.simpleName)
@@ -132,7 +137,7 @@ class HybridSignInActivity : FragmentActivity() {
 
     private fun onRequest(request: GetAssertionRequest, future: CompletableFuture<Decision>) {
         val candidates = PasskeyStore(applicationContext).load().filter { request.accepts(it) }
-        Log.d(TAG, "request for ${request.rpId}, allowList=${request.allowList.size}, candidates=${candidates.size}")
+        Dbg.d(TAG, "request for ${request.rpId}, allowList=${request.allowList.size}, candidates=${candidates.size}")
         when (candidates.size) {
             0 -> {
                 ui = Ui.Failed(
@@ -192,7 +197,7 @@ class HybridSignInActivity : FragmentActivity() {
                 Box(Modifier.fillMaxWidth()) {
                     TextButton(onClick = onClose, modifier = Modifier.align(Alignment.TopStart)) {
                         Icon(Icons.Rounded.Close, null, Modifier.size(18.dp))
-                        Text(if (ui is Ui.Done || ui is Ui.Failed) "  Close" else "  Cancel")
+                        Text(if (ui is Ui.Failed) "  Close" else "  Cancel")
                     }
                 }
                 when (ui) {
@@ -204,9 +209,6 @@ class HybridSignInActivity : FragmentActivity() {
                     is Ui.Choose -> Choose(ui, onPick)
                     is Ui.Unlocking -> Status(Icons.Rounded.Lock, "Confirm it's you", "Unlock to sign in to ${site(ui.passkey)} as ${ui.passkey.label}.")
                     is Ui.Signing -> Status(title = "Signing in", text = "Sending the signature to your computer…", busy = true)
-                    is Ui.Done -> Status(Icons.Rounded.Check, "Signed in on your computer", "${ui.passkey.label} at ${site(ui.passkey)}.", good = true) {
-                        FilledTonalButton(onClick = onClose) { Text("Done") }
-                    }
                     is Ui.Failed -> Status(Icons.Rounded.Close, ui.title, ui.message, bad = true) {
                         FilledTonalButton(onClick = onClose) { Text("Close") }
                     }
