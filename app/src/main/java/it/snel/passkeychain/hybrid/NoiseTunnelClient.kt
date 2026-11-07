@@ -247,20 +247,14 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                 handshake()
                 handshakeDone = true
             }
-            Log.d(TAG, "receive(): waiting up to 120s for transport record from Chrome")
-            val record = incoming.poll(120, TimeUnit.SECONDS)
+            Log.d(TAG, "receive(): waiting up to 120s for transport ciphertext from Chrome")
+            val ciphertext = incoming.poll(120, TimeUnit.SECONDS)
                 ?: run {
-                    Log.w(TAG, "receive(): timeout, no transport record from Chrome after post-handshake")
-                    throw HybridTransport.DeviceStageMissing("timeout waiting for transport record")
+                    Log.w(TAG, "receive(): timeout, no transport ciphertext from Chrome after post-handshake")
+                    throw HybridTransport.DeviceStageMissing("timeout waiting for transport ciphertext")
                 }
-            Log.d(TAG, "receive(): got transport record ${record.size} bytes: ${hex(record)}")
-            // transport record: 2-byte BE length || ciphertext
-            require(record.size >= 2) { "record too short" }
-            val len = ((record[0].toInt() and 0xFF) shl 8) or (record[1].toInt() and 0xFF)
-            Log.d(TAG, "receive(): declared length = $len")
-            require(record.size >= 2 + len) { "record shorter than declared length" }
-            val ct = record.copyOfRange(2, 2 + len)
-            val pt = decryptTransport(ct)
+            Log.d(TAG, "receive(): got transport ciphertext ${ciphertext.size} bytes: ${hex(ciphertext)}")
+            val pt = decryptTransport(ciphertext)
             Log.d(TAG, "receive(): decrypted ${pt.size} bytes: ${hex(pt)}")
             return pt
         }
@@ -268,9 +262,8 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
         override fun send(plaintext: ByteArray) {
             if (!handshakeDone) throw IllegalStateException("handshake not done")
             val ct = encryptTransport(plaintext)
-            val record = byteArrayOf((ct.size ushr 8).toByte(), (ct.size and 0xFF).toByte()) + ct
-            Log.d(TAG, "transport send ${record.size} bytes: ${hex(record)}")
-            ws.send(okio.ByteString.of(*record))
+            Log.d(TAG, "transport send ${ct.size} bytes: ${hex(ct)}")
+            ws.send(okio.ByteString.of(*ct))
         }
 
         override fun close() {
@@ -412,12 +405,8 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             postHandshake[paddedSize - 1] = ((numPadding ushr 8) and 0xFF).toByte()
             Log.d(TAG, "post-handshake padded ${postHandshake.size} bytes (padding=$numPadding): ${hex(postHandshake)}")
             val postHandshakeCt = encryptTransport(postHandshake)
-            val postHandshakeRecord = byteArrayOf(
-                (postHandshakeCt.size ushr 8).toByte(),
-                (postHandshakeCt.size and 0xFF).toByte()
-            ) + postHandshakeCt
-            Log.d(TAG, "post-handshake record ${postHandshakeRecord.size} bytes: ${hex(postHandshakeRecord)}")
-            ws.send(okio.ByteString.of(*postHandshakeRecord))
+            Log.d(TAG, "post-handshake ciphertext ${postHandshakeCt.size} bytes: ${hex(postHandshakeCt)}")
+            ws.send(okio.ByteString.of(*postHandshakeCt))
             Log.d(TAG, "post-handshake sent; waiting for CTAP2 request")
         }
 
