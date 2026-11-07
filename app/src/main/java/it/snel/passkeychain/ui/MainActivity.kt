@@ -102,7 +102,7 @@ import androidx.compose.ui.unit.dp
 import it.snel.passkeychain.R
 import it.snel.passkeychain.camera.QrScanActivity
 import it.snel.passkeychain.hybrid.FidoQr
-import it.snel.passkeychain.io.KeePassXc
+import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.store.PasskeyStore
 import it.snel.passkeychain.ui.theme.PassKeyChainTheme
@@ -156,7 +156,7 @@ private fun MainScreen(store: PasskeyStore) {
             val msg = withContext(Dispatchers.IO) {
                 runCatching {
                     val text = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
-                    val res = KeePassXc.parse(text)
+                    val res = Bitwarden.parse(text)
                     res.imported.forEach { store.upsert(it) }
                     passkeys = store.load()
                     val n = res.imported.size
@@ -173,7 +173,7 @@ private fun MainScreen(store: PasskeyStore) {
             val msg = withContext(Dispatchers.IO) {
                 runCatching {
                     val all = store.load()
-                    ctx.contentResolver.openOutputStream(uri)!!.use { it.write(KeePassXc.export(all).toByteArray()) }
+                    ctx.contentResolver.openOutputStream(uri)!!.use { it.write(Bitwarden.export(all).toByteArray()) }
                     if (all.size == 1) "Exported 1 passkey" else "Exported ${all.size} passkeys"
                 }.getOrElse { "Export failed: ${it.message}" }
             }
@@ -217,7 +217,7 @@ private fun MainScreen(store: PasskeyStore) {
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, "More options") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
-                            text = { Text("Import from KeePassXC") },
+                            text = { Text("Import from Bitwarden") },
                             leadingIcon = { Icon(Icons.Rounded.FileDownload, null) },
                             onClick = { menuOpen = false; openImport() },
                         )
@@ -225,7 +225,7 @@ private fun MainScreen(store: PasskeyStore) {
                             text = { Text("Export") },
                             leadingIcon = { Icon(Icons.Rounded.FileUpload, null) },
                             enabled = passkeys.isNotEmpty(),
-                            onClick = { menuOpen = false; exportLauncher.launch("passkeychain-export.json") },
+                            onClick = { menuOpen = false; exportLauncher.launch("passkeychain-bitwarden.json") },
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
@@ -431,7 +431,7 @@ private fun EmptyState(modifier: Modifier, onImport: () -> Unit) {
         Text("No passkeys yet", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp))
         Text(
-            "Import the passkeys you exported from KeePassXC. They are encrypted with the Android Keystore and never leave this phone.",
+            "Import the passkeys from a Bitwarden export (unencrypted .json). They are encrypted with the Android Keystore and never leave this phone.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PassKeyChain — import, store &amp; use your passkeys on Android</title>
-<meta name="description" content="An open-source Android app that imports FIDO2 passkeys (KeePassXC JSON), stores them in Android Keystore-encrypted storage, and offers them to sign-ins on the phone as a passkey provider.">
+<meta name="description" content="An open-source Android app that imports FIDO2 passkeys from a Bitwarden export, stores them in Android Keystore-encrypted storage, and offers them to sign-ins on the phone as a passkey provider.">
 <meta name="theme-color" content="#4F46E5">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon.png" type="image/png">
@@ -113,7 +113,7 @@
   <div class="wrap hero-grid">
     <div>
       <h1>Your passkeys.<br>Your device.<br>Your keys.</h1>
-      <p class="lede">PassKeyChain imports FIDO2 passkeys from a KeePassXC export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and offers them when you sign in on your phone.</p>
+      <p class="lede">PassKeyChain imports FIDO2 passkeys from a Bitwarden export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and offers them when you sign in on your phone.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/rsnel/passkeychain/releases/download/debug/passkeychain-debug.apk">⬇ Download debug APK</a>
         <a class="btn btn-ghost" href="https://github.com/rsnel/passkeychain">View source on GitHub</a>
@@ -140,7 +140,7 @@
       <div class="card">
         <div class="ic">🔑</div>
         <h3>Import passkeys</h3>
-        <p>Reads KeePassXC passkey exports (<code>fido2Credentials</code> JSON). The parser is tolerant of PEM, base64 PKCS#8, or raw-scalar key encodings.</p>
+        <p>Reads the passkeys from a Bitwarden JSON export (<code>fido2Credentials</code>). The parser is tolerant of PEM, base64 PKCS#8, or raw-scalar key encodings.</p>
       </div>
       <div class="card">
         <div class="ic">🛡️</div>
@@ -160,7 +160,7 @@
       <div class="card">
         <div class="ic">📤</div>
         <h3>Export anytime</h3>
-        <p>Export back to the KeePassXC-compatible format. No lock-in — your credentials move with you.</p>
+        <p>Exports in Bitwarden’s format, so you can import them back into Bitwarden. No lock-in — your credentials move with you.</p>
       </div>
       <div class="card">
         <div class="ic">⬆️</div>
@@ -190,7 +190,7 @@
     <div class="steps">
       <div class="step">
         <h3>Import</h3>
-        <p>Export your passkeys from KeePassXC to JSON, then open it in PassKeyChain. Keys are normalised and encrypted into Keystore-backed storage.</p>
+        <p>Export your vault from Bitwarden as unencrypted JSON, open it in PassKeyChain, then delete the export file. Keys are normalised and encrypted into Keystore-backed storage.</p>
       </div>
       <div class="step">
         <h3>Sign in</h3>
@@ -275,7 +275,7 @@
       <div class="box good">
         <h3>✅ Working &amp; unit-tested</h3>
         <ul>
-          <li>KeePassXC import / export round-trip</li>
+          <li>Bitwarden import / export round-trip</li>
           <li>P-256 key decoding across encodings</li>
           <li>WebAuthn ES256 assertion signing</li>
           <li>FIDO <code>FIDO:/</code> QR decoding</li>
@@ -300,7 +300,7 @@
 <footer>
   <div class="wrap">
     <p>PassKeyChain · open source on <a href="https://github.com/rsnel/passkeychain">github.com/rsnel/passkeychain</a> · licensed under the <a href="https://github.com/rsnel/passkeychain/blob/main/LICENSE">GPLv3</a>.<br>
-    Not affiliated with Microsoft, Google, KeePassXC, or the FIDO Alliance.</p>
+    Not affiliated with Microsoft, Google, Bitwarden, or the FIDO Alliance.</p>
   </div>
 </footer>
 

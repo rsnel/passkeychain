@@ -18,7 +18,7 @@ Website / screenshots: **https://rsnel.github.io/passkeychain/**
 
 **Working and unit-tested** (re-verified in CI on every build):
 
-- KeePassXC import/export round-trip
+- Bitwarden import/export round-trip
 - P-256 private-key decoding across PEM / base64-PKCS#8 / raw-scalar encodings
 - WebAuthn **ES256 assertion signing** (`authenticatorData || clientDataHash`)
 - FIDO `FIDO:/` hybrid **QR decoding** (base-10 digit packing + CBOR)
@@ -74,27 +74,42 @@ GitHub release that the release app follows via `/releases/latest`.
 
 ## Import format
 
-KeePassXC passkey export:
+PassKeyChain reads and writes Bitwarden's unencrypted JSON export
+(Bitwarden: *Tools → Export vault → File format: .json*). Passkeys sit inside
+login items:
 
 ```json
-{ "fido2Credentials": [ {
-    "credentialId": "...", "keyType": "public-key", "keyAlgorithm": "ECDSA",
-    "keyCurve": "P-256", "keyValue": "-----BEGIN PRIVATE KEY----- ...",
-    "rpId": "login.microsoft.com", "userHandle": "...", "userName": "...",
-    "rpName": "Microsoft", "userDisplayName": "...", "counter": "0",
-    "discoverable": "true" } ] }
+{ "encrypted": false, "items": [ { "type": 1, "name": "Microsoft", "login": {
+    "username": "...", "fido2Credentials": [ {
+      "credentialId": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+      "keyType": "public-key", "keyAlgorithm": "ECDSA", "keyCurve": "P-256",
+      "keyValue": "<PKCS#8 private key, base64url>",
+      "rpId": "login.microsoft.com", "userHandle": "<base64url>",
+      "userName": "...", "counter": "0", "rpName": "Microsoft",
+      "userDisplayName": "...", "discoverable": "true",
+      "creationDate": "2026-09-16T06:32:48.156Z" } ] } } ] }
 ```
 
+- `credentialId` is a GUID for 16-byte credential ids, otherwise `b64.` +
+  base64url (Bitwarden's convention).
+- The importer finds every `fido2Credentials` array anywhere in the file, so a
+  full export, one item or just the pasted array all work. Other items
+  (passwords, notes) are ignored.
+- `keyValue` is also accepted as PEM or base64 PKCS#8 (older PassKeyChain
+  exports).
+- Export writes the same structure, so Bitwarden can import it again.
+
 A throwaway example (dummy key) is at [`docs/sample-passkey.json`](docs/sample-passkey.json).
-The importer also accepts a bare array or a single credential object, and
-`keyValue` as PEM, base64 PKCS#8, or raw base64/base64url scalar.
+
+**Careful:** an unencrypted export contains all your private keys (and, from
+Bitwarden, your passwords too). Delete it once it is imported.
 
 ## Project layout
 
 ```
 app/src/main/java/it/snel/passkeychain/
   webauthn/   CredentialKey, Assertion, Cbor      (verified crypto core)
-  io/         KeePassXc                           (import/export)
+  io/         Bitwarden                           (import/export)
   store/      KeystoreCrypto, PasskeyStore        (encrypted storage)
   provider/   PasskeyProviderService, GetAssertionActivity  (Credential Manager)
   hybrid/     FidoQr, HybridTransport             (cross-device caBLE)
