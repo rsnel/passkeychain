@@ -19,11 +19,11 @@ fun signingValue(env: String, prop: String): String? =
 
 val releaseStoreFile = signingValue("PASSKEYCHAIN_KEYSTORE_FILE", "storeFile")
 
-// CI builds get increasing version codes, so a newer APK installs over an older
-// one; the debug app's updater compares this number with the published build.
-// the CI run number; builders without it (F-Droid) pass -PversionCode=<n>
-val buildNumber = (project.findProperty("versionCode") as String?)?.toIntOrNull()
-    ?: System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+// Release builds take versionCode and versionName from AndroidManifest.xml (set
+// by hand per release; F-Droid reads them there). Debug builds get the CI run
+// number instead, so every newer debug APK installs over an older one; the debug
+// app's updater compares this number with the published build.
+val buildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
 
 // The version name comes from the git tags: "1.0" for a build of tag v1.0,
 // "1.0-3-gabc1234" for the third commit after it (just the hash before the
@@ -51,8 +51,6 @@ android {
         applicationId = "it.snel.passkeychain"
         minSdk = 28
         targetSdk = 35
-        versionCode = buildNumber
-        versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // native code (ML Kit barcode scanner) only for real phones: the x86 builds are
@@ -156,4 +154,14 @@ dependencies {
     testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+}
+
+// debug builds: the CI run number and the git description (see above)
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(buildNumber)
+            output.versionName.set(appVersionName)
+        }
+    }
 }

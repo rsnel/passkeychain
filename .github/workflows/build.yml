@@ -93,6 +93,22 @@ jobs:
             | grep -v '^> Task .* UP-TO-DATE' | head -40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=Build errors::${msg:-no error lines found, see the log}"
 
+      - name: Show versions
+        run: |
+          aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          for apk in app/build/outputs/apk/*/*.apk; do
+            v=$("$aapt2" dump badging "$apk" | grep -m1 '^package:' | grep -o "versionCode='[^']*' versionName='[^']*'")
+            echo "::notice title=$(basename "$apk") version::$v"
+          done
+          # a release tag must match the version in the manifest
+          if [ "$IS_RELEASE" = true ]; then
+            want=$(grep -o 'android:versionName="[^"]*"' app/src/main/AndroidManifest.xml | cut -d'"' -f2)
+            if [ "${GITHUB_REF_NAME#v}" != "$want" ]; then
+              echo "::error title=Version::tag $GITHUB_REF_NAME does not match versionName $want in AndroidManifest.xml"
+              exit 1
+            fi
+          fi
+
       - name: Show signing certificates
         run: |
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)

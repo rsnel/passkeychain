@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The release version: change both on every release, then tag it vX.Y
+     (versionCode = major*10000 + minor*100 + patch; changelogs for F-Droid in
+     fastlane/metadata/android/en-US/changelogs/<versionCode>.txt). Debug builds
+     get the CI run number and the git description instead (app/build.gradle.kts). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    xmlns:tools="http://schemas.android.com/tools"
+    android:versionCode="200"
+    android:versionName="0.2">
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.CAMERA"/>
