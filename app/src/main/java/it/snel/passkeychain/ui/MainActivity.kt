@@ -165,7 +165,7 @@ private suspend fun importFromAnotherApp(activity: FragmentActivity, store: Pass
     val request = ImportCredentialsRequest(setOf(CredentialTypes.CREDENTIAL_TYPE_PUBLIC_KEY), emptySet())
     val response = manager.importCredentials(activity, request)
     val json = response.response.responseJson
-    withContext(Dispatchers.IO) { importJson(store, json) }
+    withContext(Dispatchers.IO) { importJson(activity, store, json, "from another app") }
 } catch (e: ImportCredentialsCancellationException) {
     null
 } catch (e: ImportCredentialsNoExportOptionException) {
@@ -176,12 +176,17 @@ private suspend fun importFromAnotherApp(activity: FragmentActivity, store: Pass
     "Import failed: ${e.message}"
 }
 
-/** Imports an unencrypted Bitwarden JSON export or a Credential Exchange (CXF) document; returns the message to show. */
-private fun importJson(store: PasskeyStore, text: String): String {
+/**
+ * Imports an unencrypted Bitwarden JSON export or a Credential Exchange (CXF)
+ * document, logs it in the activity log, and returns the message to show.
+ */
+private fun importJson(ctx: android.content.Context, store: PasskeyStore, text: String, source: String): String {
     val res = if (Cxf.hasPasskeys(text)) Cxf.parse(text) else Bitwarden.parse(text)
     val merged = ImportMerge.merge(store.load(), res.imported)
     if (merged.changed) store.save(merged.passkeys)
-    return merged.message(res.skipped.size)
+    val message = merged.message(res.skipped.size)
+    SignInHistory(ctx).add(HistoryEntry.change(HistoryEntry.Outcome.Imported, account = source, detail = message))
+    return message
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -231,7 +236,7 @@ private fun MainScreen(store: PasskeyStore) {
                         BitwardenEncrypted.isEncrypted(text) ->
                             "This is an \"account restricted\" Bitwarden export, which only Bitwarden can read. " +
                                 "Export again as .json (Encrypted) with export type \"Password protected\"."
-                        else -> importJson(store, text).also { passkeys = store.load() }
+                        else -> importJson(ctx, store, text, "from a file").also { passkeys = store.load() }
                     }
                 }.getOrElse { "Import failed: ${it.message}" }
             }
@@ -252,6 +257,9 @@ private fun MainScreen(store: PasskeyStore) {
                     ctx.contentResolver.openOutputStream(uri)!!.use { it.write(content.toByteArray()) }
                     // passkeys created on this phone now have a copy elsewhere (backup state)
                     if (all.any { !it.backedUp }) store.save(all.map { it.copy(backedUp = true) })
+                    val what = (if (all.size == 1) "1 passkey" else "${all.size} passkeys") +
+                        if (password != null) ", password protected" else ", not encrypted"
+                    history.add(HistoryEntry.change(HistoryEntry.Outcome.Exported, detail = what))
                     (if (all.size == 1) "Exported 1 passkey" else "Exported ${all.size} passkeys") +
                         if (password != null) ", encrypted" else ""
                 }.getOrElse { "Export failed: ${it.message}" }
@@ -311,7 +319,7 @@ private fun MainScreen(store: PasskeyStore) {
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("Sign-in history") },
+                            text = { Text("Activity") },
                             leadingIcon = { Icon(AppIcons.History, null) },
                             onClick = {
                                 menuOpen = false
@@ -394,9 +402,15 @@ private fun MainScreen(store: PasskeyStore) {
             onDelete = {
                 selected = null
                 scope.launch {
-                    passkeys = withContext(Dispatchers.IO) { store.delete(pk.credentialId, pk.rpId) }
+                    passkeys = withContext(Dispatchers.IO) {
+                        history.add(HistoryEntry.change(HistoryEntry.Outcome.Deleted, pk.rpId, pk.label, pk.credentialId))
+                        store.delete(pk.credentialId, pk.rpId)
+                    }
                     val r = snackbar.showSnackbar("Deleted passkey for ${pk.label}", actionLabel = "Undo", withDismissAction = true)
-                    if (r == SnackbarResult.ActionPerformed) passkeys = withContext(Dispatchers.IO) { store.upsert(pk) }
+                    if (r == SnackbarResult.ActionPerformed) passkeys = withContext(Dispatchers.IO) {
+                        history.add(HistoryEntry.change(HistoryEntry.Outcome.Restored, pk.rpId, pk.label, pk.credentialId))
+                        store.upsert(pk)
+                    }
                 }
             },
         )
@@ -480,7 +494,7 @@ private fun MainScreen(store: PasskeyStore) {
                         onSuccess = { inner ->
                             pendingImport = null
                             val msg = withContext(Dispatchers.IO) {
-                                runCatching { importJson(store, inner).also { passkeys = store.load() } }
+                                runCatching { importJson(ctx, store, inner, "from a password-protected file").also { passkeys = store.load() } }
                                     .getOrElse { "Import failed: ${it.message}" }
                             }
                             snackbar.showSnackbar(msg)
@@ -653,14 +667,16 @@ private fun formatTime(millis: Long): String =
 private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onClear: () -> Unit) {
     val green = Color(0xFF1E9E5A)
     val red = Color(0xFFC62828)
+    val grey = Color(0xFF8A8796)
+    val indigo = Color(0xFF4A52B8)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Sign-in history", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text("Activity", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 if (entries.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear") }
             }
             Text(
-                "The last ${HistoryEntry.MAX} sign-ins with PassKeyChain, kept encrypted on this phone.",
+                "The last ${HistoryEntry.MAX} sign-ins and changes to your passkeys, kept encrypted on this phone.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp),
@@ -668,37 +684,49 @@ private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onC
             Spacer(Modifier.height(8.dp))
             if (entries.isEmpty()) {
                 Text(
-                    "No sign-ins yet.",
+                    "Nothing yet.",
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(24.dp),
                 )
             } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
                 items(entries, key = { it.time.toString() + it.rpId + it.outcome }) { e ->
-                    val ok = e.succeeded
-                    val what = when (e.outcome) {
-                        HistoryEntry.Outcome.SignedIn -> "Signed in"
-                        HistoryEntry.Outcome.Created -> "Passkey created"
-                        HistoryEntry.Outcome.Denied -> "Cancelled"
-                        HistoryEntry.Outcome.Failed -> "Failed"
-                    }
                     val where = if (e.via == HistoryEntry.Via.Computer) "on a computer" else "on this phone"
+                    // what happened, its icon and colour
+                    val (what, icon, colour) = when (e.outcome) {
+                        HistoryEntry.Outcome.SignedIn -> Triple("Signed in $where", Icons.Rounded.Check, green)
+                        HistoryEntry.Outcome.Created -> Triple("Passkey created $where", Icons.Rounded.Check, green)
+                        HistoryEntry.Outcome.Denied -> Triple("Cancelled $where", Icons.Rounded.Close, red)
+                        HistoryEntry.Outcome.Failed -> Triple("Failed $where", Icons.Rounded.Close, red)
+                        HistoryEntry.Outcome.Deleted -> Triple("Passkey deleted", Icons.Rounded.Delete, grey)
+                        HistoryEntry.Outcome.Restored -> Triple("Passkey restored (undo)", Icons.Rounded.Check, green)
+                        HistoryEntry.Outcome.Imported -> Triple("Passkeys imported ${e.account}", null, indigo)
+                        HistoryEntry.Outcome.Exported -> Triple("Passkeys exported", null, indigo)
+                    }
+                    val isTransfer = e.outcome == HistoryEntry.Outcome.Imported || e.outcome == HistoryEntry.Outcome.Exported
                     ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         leadingContent = {
-                            Box(
-                                Modifier.size(28.dp).clip(CircleShape).background(if (ok) green else red),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(if (ok) Icons.Rounded.Check else Icons.Rounded.Close, null, Modifier.size(18.dp), tint = Color.White)
+                            Box(Modifier.size(28.dp).clip(CircleShape).background(colour), contentAlignment = Alignment.Center) {
+                                when {
+                                    icon != null -> Icon(icon, null, Modifier.size(18.dp), tint = Color.White)
+                                    e.outcome == HistoryEntry.Outcome.Imported -> Icon(AppIcons.FileDownload, null, Modifier.size(18.dp), tint = Color.White)
+                                    else -> Icon(AppIcons.FileUpload, null, Modifier.size(18.dp), tint = Color.White)
+                                }
                             }
                         },
-                        headlineContent = { Text(e.rpId.ifBlank { "Unknown site" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        headlineContent = {
+                            Text(
+                                if (isTransfer) (if (e.outcome == HistoryEntry.Outcome.Imported) "Import" else "Export")
+                                else e.rpId.ifBlank { "Unknown site" },
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        },
                         supportingContent = {
                             Column {
-                                if (e.account.isNotBlank()) Text(e.account)
-                                Text("$what $where")
+                                if (!isTransfer && e.account.isNotBlank()) Text(e.account)
+                                Text(what)
                                 Text(formatTime(e.time), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (e.detail.isNotBlank()) Text(e.detail, color = red)
+                                if (e.detail.isNotBlank()) Text(e.detail, color = if (isTransfer) MaterialTheme.colorScheme.onSurfaceVariant else red)
                             }
                         },
                         modifier = Modifier.padding(horizontal = 8.dp).semantics(mergeDescendants = true) {},

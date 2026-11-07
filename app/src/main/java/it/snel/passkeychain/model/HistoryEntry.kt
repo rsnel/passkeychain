@@ -4,10 +4,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * One sign-in attempt, for the history screen and "last used": when, which
- * site and account, where (a computer, by QR code, or this phone itself) and
- * how it ended. [credentialId] and [account] are empty when the attempt ended
- * before a passkey was chosen.
+ * One entry of the activity log: a sign-in attempt (when, which site and
+ * account, where: a computer by QR code, or this phone itself, and how it
+ * ended) or a change to the passkeys (created, deleted, restored, imported,
+ * exported). Also the source of "last used". [credentialId] and [account] are
+ * empty when a sign-in ended before a passkey was chosen, and for imports and
+ * exports, which describe themselves in [detail].
  */
 data class HistoryEntry(
     val time: Long,                 // epoch milliseconds
@@ -19,8 +21,9 @@ data class HistoryEntry(
     val detail: String = "",        // the error message, for Failed
 ) {
     enum class Via { Computer, ThisPhone }
-    enum class Outcome { SignedIn, Created, Denied, Failed }
+    enum class Outcome { SignedIn, Created, Denied, Failed, Deleted, Restored, Imported, Exported }
 
+    /** a sign-in or creation that worked (counts for "last used") */
     val succeeded: Boolean get() = outcome == Outcome.SignedIn || outcome == Outcome.Created
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -41,6 +44,10 @@ data class HistoryEntry(
             outcome = runCatching { Outcome.valueOf(o.getString("outcome")) }.getOrDefault(Outcome.Failed),
             detail = o.optString("detail"),
         )
+
+        /** An entry about the passkeys themselves, made on this phone. */
+        fun change(outcome: Outcome, rpId: String = "", account: String = "", credentialId: String = "", detail: String = "") =
+            HistoryEntry(System.currentTimeMillis(), rpId, account, credentialId, Via.ThisPhone, outcome, detail)
 
         fun encode(list: List<HistoryEntry>): String = JSONArray().apply { list.forEach { put(it.toJson()) } }.toString()
 

@@ -13,7 +13,7 @@ class HistoryEntryTest {
         HistoryEntry(time, rp, "sam@example.com", cred, Via.Computer, outcome, if (outcome == Outcome.Failed) "why" else "")
 
     @Test fun roundTripsThroughJson() {
-        val list = listOf(e(3), e(2, Outcome.Failed), e(1, Outcome.Denied))
+        val list = listOf(e(5, Outcome.Deleted), e(4, Outcome.Imported), e(3), e(2, Outcome.Failed), e(1, Outcome.Denied))
         assertEquals(list, HistoryEntry.decode(HistoryEntry.encode(list)))
     }
 

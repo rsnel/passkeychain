@@ -5,8 +5,9 @@ import it.snel.passkeychain.model.HistoryEntry
 import java.io.File
 
 /**
- * The sign-in history, encrypted like the passkeys (it shows which sites you
- * use). Kept short ([HistoryEntry.MAX] entries) and never exported.
+ * The activity log (sign-ins and changes to the passkeys), encrypted like the
+ * passkeys (it shows which sites you use). Kept short ([HistoryEntry.MAX]
+ * entries) and never exported.
  */
 class SignInHistory(context: Context) {
     private val file = File(context.filesDir, "history.enc")
