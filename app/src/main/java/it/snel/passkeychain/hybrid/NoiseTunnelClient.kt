@@ -20,10 +20,15 @@ import it.snel.passkeychain.webauthn.Cbor
  * With Debug logging on, the handshake's intermediate values and the raw
  * messages are logged.
  *
- * [onHandshakeDone] is called once the handshake has completed (progress
+ * [onBrowserConnected] is called when the computer's first handshake message
+ * arrives, [onHandshakeDone] once the handshake has completed (progress
  * display, and the Bluetooth advert can stop: the browser has found us).
  */
-class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTransport.TunnelClient {
+class NoiseTunnelClient(
+    /** the computer has found the phone and sent the first handshake message */
+    private val onBrowserConnected: () -> Unit = {},
+    private val onHandshakeDone: () -> Unit = {},
+) : HybridTransport.TunnelClient {
 
     private val TAG = "NoiseTunnelClient"
 
@@ -207,6 +212,7 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
                 "Your computer did not connect. Move the phone close to the computer, check that Bluetooth " +
                     "is on on the computer, and scan a fresh QR code.",
             )
+            onBrowserConnected()
             val result = try {
                 handshake.respond(msg1)
             } catch (e: NoiseHandshake.Failed) {

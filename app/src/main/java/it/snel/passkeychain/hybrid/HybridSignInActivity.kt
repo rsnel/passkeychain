@@ -26,6 +26,8 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -140,7 +142,8 @@ class HybridSignInActivity : FragmentActivity() {
 
     // ---- progress list --------------------------------------------------------------
 
-    private enum class Step { Scan, Tunnel, Bluetooth, KeyExchange, Sign }
+    /** The eight steps, as the website explains them (docs/index.html, "How signing in with a QR code works"). */
+    private enum class Step { Scan, Tunnel, Bluetooth, BrowserHello, PhoneHello, Request, Approve, Send }
 
     private sealed interface State {
         data object Pending : State
@@ -149,7 +152,7 @@ class HybridSignInActivity : FragmentActivity() {
         data class Failed(val message: String) : State
     }
 
-    private val states = mutableStateListOf<State>(State.Active, State.Pending, State.Pending, State.Pending, State.Pending)
+    private val states = mutableStateListOf<State>(State.Active).apply { repeat(Step.entries.size - 1) { add(State.Pending) } }
     private var tunnelHost by mutableStateOf<String?>(null)
     private var scanHint by mutableStateOf<String?>(null)
     private var signDetail by mutableStateOf<String?>(null)
@@ -206,7 +209,7 @@ class HybridSignInActivity : FragmentActivity() {
             return try {
                 future.get(3, TimeUnit.MINUTES)
             } catch (e: TimeoutException) {
-                set(Step.Sign, State.Failed("No answer in time."))
+                set(Step.Approve, State.Failed("No answer in time."))
                 CreateDecision.Denied
             } finally {
                 pendingCreate = null
@@ -375,15 +378,18 @@ class HybridSignInActivity : FragmentActivity() {
     private fun start(qr: FidoQr) {
         set(Step.Tunnel, State.Active)
         val ble = AndroidBleAdvertiser(this).also { bleAdvertiser = it }
-        val tunnel = NoiseTunnelClient(onHandshakeDone = {
-            ble.stop() // the computer has found the phone: no need to keep broadcasting
-            done(Step.KeyExchange, Step.Sign)
-        })
+        val tunnel = NoiseTunnelClient(
+            onBrowserConnected = { done(Step.BrowserHello, Step.PhoneHello) },
+            onHandshakeDone = {
+                ble.stop() // the computer has found the phone: no need to keep broadcasting
+                done(Step.PhoneHello, Step.Request)
+            },
+        )
         val transport = HybridTransport(ble, tunnel) { p ->
             when (p) {
                 is HybridTransport.Progress.TunnelOpening -> runOnUiThread { tunnelHost = p.host }
                 HybridTransport.Progress.TunnelOpen -> done(Step.Tunnel, Step.Bluetooth)
-                HybridTransport.Progress.Broadcasting -> done(Step.Bluetooth, Step.KeyExchange)
+                HybridTransport.Progress.Broadcasting -> done(Step.Bluetooth, Step.BrowserHello)
             }
         }
         this.transport = transport
@@ -403,7 +409,7 @@ class HybridSignInActivity : FragmentActivity() {
                     if (isDestroyed) return@runOnUiThread
                     if (response[0] != 0.toByte() && !failed) {
                         // an answer other than a signature that no step has explained yet
-                        val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Sign.ordinal
+                        val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Send.ordinal
                         states[active] = State.Failed(
                             when (response[0].toInt() and 0xFF) {
                                 CtapAuthenticator.CTAP2_ERR_UNSUPPORTED_ALGORITHM ->
@@ -413,7 +419,7 @@ class HybridSignInActivity : FragmentActivity() {
                         )
                     } else if (!failed && signDetail != null) {
                         // all steps ticked: leave the list and the picture up for a moment
-                        states[Step.Sign.ordinal] = State.Done
+                        states[Step.Send.ordinal] = State.Done
                         window.decorView.postDelayed({ if (!isFinishing) finish() }, 1000)
                     }
                 }
@@ -428,7 +434,7 @@ class HybridSignInActivity : FragmentActivity() {
                 }
                 runOnUiThread {
                     if (!failed && !isDestroyed) {
-                        val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Sign.ordinal
+                        val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Send.ordinal
                         states[active] = State.Failed(message)
                     }
                 }
@@ -447,7 +453,7 @@ class HybridSignInActivity : FragmentActivity() {
         return try {
             future.get(3, TimeUnit.MINUTES)
         } catch (e: TimeoutException) {
-            set(Step.Sign, State.Failed("No passkey was chosen in time."))
+            set(Step.Approve, State.Failed("No passkey was chosen in time."))
             Decision.Denied
         } finally {
             pending = null
@@ -456,13 +462,14 @@ class HybridSignInActivity : FragmentActivity() {
 
     private fun onRequest(request: GetAssertionRequest, future: CompletableFuture<Decision>) {
         // the request only arrives after the key exchange
-        states[Step.KeyExchange.ordinal] = State.Done
-        states[Step.Sign.ordinal] = State.Active
+        // the request has arrived: now it is up to you
+        states[Step.Request.ordinal] = State.Done
+        states[Step.Approve.ordinal] = State.Active
         val candidates = PasskeyStore(applicationContext).load().filter { request.accepts(it) }
         Dbg.d(TAG, "request for ${request.rpId}, allowList=${request.allowList.size}, candidates=${candidates.size}")
         when (candidates.size) {
             0 -> {
-                states[Step.Sign.ordinal] = State.Failed("None of your passkeys is for ${request.rpId}. Import it from Bitwarden first.")
+                states[Step.Approve.ordinal] = State.Failed("None of your passkeys is for ${request.rpId}. Import it from Bitwarden first.")
                 future.complete(Decision.NoCredentials)
             }
             1 -> unlockAndSign(candidates.single(), candidates)
@@ -480,13 +487,13 @@ class HybridSignInActivity : FragmentActivity() {
             title = "Sign in to ${pk.rpName.ifBlank { pk.rpId }}",
             subtitle = pk.label,
             description = "Confirm it's you to sign in on your computer",
-            onSuccess = { signedWith = pk; future.complete(Decision.Sign(pk)) },
+            onSuccess = { signedWith = pk; done(Step.Approve, Step.Send); future.complete(Decision.Sign(pk)) },
             onError = { cancelled, message ->
                 if (cancelled && candidates.size > 1) {
                     signDetail = null
                     choice = candidates // back to the choice; the browser keeps waiting
                 } else {
-                    states[Step.Sign.ordinal] = State.Failed(
+                    states[Step.Approve.ordinal] = State.Failed(
                         if (!UserUnlock.available(this)) UserUnlock.NO_SCREEN_LOCK else if (cancelled) "Cancelled." else message,
                     )
                     future.complete(Decision.Denied)
@@ -498,11 +505,12 @@ class HybridSignInActivity : FragmentActivity() {
     /** On the UI thread: refuse a second passkey for the same account, else confirm and unlock. */
     private fun onCreateRequest(request: MakeCredentialRequest, future: CompletableFuture<CreateDecision>) {
         creating = true
-        states[Step.KeyExchange.ordinal] = State.Done
-        states[Step.Sign.ordinal] = State.Active
+        // the request has arrived: now it is up to you
+        states[Step.Request.ordinal] = State.Done
+        states[Step.Approve.ordinal] = State.Active
         val existing = PasskeyStore(applicationContext).load().firstOrNull { request.excludes(it) }
         if (existing != null) {
-            states[Step.Sign.ordinal] = State.Failed("You already have a passkey for ${request.rpId} on this phone (${existing.label}).")
+            states[Step.Approve.ordinal] = State.Failed("You already have a passkey for ${request.rpId} on this phone (${existing.label}).")
             future.complete(CreateDecision.Excluded)
             return
         }
@@ -513,9 +521,9 @@ class HybridSignInActivity : FragmentActivity() {
             title = "Create a passkey for ${request.rpName.ifBlank { request.rpId }}",
             subtitle = account,
             description = "Confirm it's you to save a new passkey on this phone",
-            onSuccess = { future.complete(CreateDecision.Create) },
+            onSuccess = { done(Step.Approve, Step.Send); future.complete(CreateDecision.Create) },
             onError = { cancelled, message ->
-                states[Step.Sign.ordinal] = State.Failed(
+                states[Step.Approve.ordinal] = State.Failed(
                     if (!UserUnlock.available(this)) UserUnlock.NO_SCREEN_LOCK else if (cancelled) "Cancelled." else message,
                 )
                 future.complete(CreateDecision.Denied)
@@ -555,7 +563,7 @@ class HybridSignInActivity : FragmentActivity() {
                     Magic(
                         still,
                         when {
-                            states[Step.Sign.ordinal] == State.Done -> Verdict.Approved
+                            states[Step.Send.ordinal] == State.Done -> Verdict.Approved
                             failed -> Verdict.Denied
                             else -> Verdict.Verifying
                         },
@@ -580,16 +588,27 @@ class HybridSignInActivity : FragmentActivity() {
                 }
             }
             // lower half: the steps, live
-            Column(Modifier.weight(1f).fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 20.dp)) {
-                Text("Sign in on your computer", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(16.dp))
-                StepRow(Step.Scan, "Scan the QR code", scanHint ?: "Point the camera at the QR code on your computer")
-                StepRow(Step.Tunnel, "Open a tunnel" + (tunnelHost?.let { " via $it" } ?: ""), "Encrypted connection through a relay on the internet")
-                StepRow(Step.Bluetooth, "Send a Bluetooth broadcast", "So the computer knows this phone is nearby")
-                StepRow(Step.KeyExchange, "Noise key exchange", "Waiting for the computer to connect and agree on keys")
-                if (creating) StepRow(Step.Sign, "Create a passkey", signDetail?.let { "For $it, after you unlock" } ?: "Confirm and unlock")
-                else StepRow(Step.Sign, "Sign", signDetail?.let { "As $it, after you unlock" } ?: "Choose a passkey and unlock")
-                Spacer(Modifier.weight(1f))
+            Column(Modifier.weight(1f).fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp)) {
+                // after a failure the steps that will not happen any more are left out
+                val lastShown = states.indexOfFirst { it is State.Failed }.takeIf { it >= 0 } ?: Step.entries.lastIndex
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    Text("Sign in on your computer", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(10.dp))
+                    for (step in Step.entries.take(lastShown + 1)) when (step) {
+                        Step.Scan -> StepRow(step, "Scan the QR code", scanHint ?: "Point the camera at the QR code on your computer")
+                        Step.Tunnel -> StepRow(step, "Set up the tunnel", "Connecting to the tunnel server" + (tunnelHost?.let { " $it" } ?: ""))
+                        Step.Bluetooth -> StepRow(step, "Tell the browser where to go", "A Bluetooth broadcast, so the computer knows this phone is nearby")
+                        Step.BrowserHello -> StepRow(step, "The browser starts the handshake", "Waiting for the computer to connect")
+                        Step.PhoneHello -> StepRow(step, "The phone answers the handshake", "Agreeing on keys, encrypted end to end")
+                        Step.Request -> StepRow(step, if (creating) "The browser asks for a new passkey" else "The browser asks for a signature", "Waiting for the computer's request")
+                        Step.Approve -> StepRow(
+                            step, "You approve",
+                            if (creating) signDetail?.let { "For $it: unlock to approve" } ?: "Confirm and unlock"
+                            else signDetail?.let { "As $it: unlock to approve" } ?: "Choose a passkey and unlock",
+                        )
+                        Step.Send -> StepRow(step, if (creating) "The phone sends the new passkey" else "The phone sends the signature", "Sending it to the computer")
+                    }
+                }
                 if (failed) {
                     Row(Modifier.align(Alignment.End)) {
                         if (settingsButton) {
@@ -603,7 +622,7 @@ class HybridSignInActivity : FragmentActivity() {
         }
         choice?.let { candidates ->
             ModalBottomSheet(
-                onDismissRequest = { choice = null; set(Step.Sign, State.Failed("Cancelled.")); pending?.complete(Decision.Denied) },
+                onDismissRequest = { choice = null; set(Step.Approve, State.Failed("Cancelled.")); pending?.complete(Decision.Denied) },
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             ) { Choose(candidates) { unlockAndSign(it, candidates) } }
         }
@@ -621,7 +640,7 @@ class HybridSignInActivity : FragmentActivity() {
             is State.Failed -> "failed"
         }
         Row(
-            Modifier.fillMaxWidth().padding(vertical = 7.dp).semantics(mergeDescendants = true) {
+            Modifier.fillMaxWidth().padding(vertical = 4.dp).semantics(mergeDescendants = true) {
                 stateDescription = spokenState
                 if (state is State.Failed) liveRegion = LiveRegionMode.Assertive
             },
