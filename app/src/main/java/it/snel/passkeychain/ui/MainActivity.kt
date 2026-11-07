@@ -3,7 +3,6 @@ package it.snel.passkeychain.ui
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -93,13 +92,15 @@ import it.snel.passkeychain.hybrid.FidoQr
 import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.store.PasskeyStore
+import it.snel.passkeychain.store.UserUnlock
+import androidx.fragment.app.FragmentActivity
 import it.snel.passkeychain.ui.theme.PassKeyChainTheme
 import it.snel.passkeychain.update.UpdateChecker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() { // FragmentActivity for the unlock prompt
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -122,6 +123,7 @@ private data class ScanResult(val title: String, val text: String, val recognize
 @Composable
 private fun MainScreen(store: PasskeyStore) {
     val ctx = LocalContext.current
+    val activity = ctx as FragmentActivity
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val updater = remember { UpdateChecker(ctx) }
@@ -213,7 +215,17 @@ private fun MainScreen(store: PasskeyStore) {
                             text = { Text("Export") },
                             leadingIcon = { Icon(AppIcons.FileUpload, null) },
                             enabled = passkeys.isNotEmpty(),
-                            onClick = { menuOpen = false; exportLauncher.launch("passkeychain-bitwarden.json") },
+                            onClick = {
+                                menuOpen = false
+                                // the export contains every private key: confirm it's the owner first
+                                UserUnlock.prompt(
+                                    activity,
+                                    title = "Export passkeys",
+                                    description = "The export file contains all your private keys, unencrypted. Keep it safe and delete it when you no longer need it.",
+                                    onSuccess = { exportLauncher.launch("passkeychain-bitwarden.json") },
+                                    onError = { cancelled, message -> if (!cancelled) scope.launch { snackbar.showSnackbar(message) } },
+                                )
+                            },
                         )
                         HorizontalDivider()
                         DropdownMenuItem(

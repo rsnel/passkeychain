@@ -1,6 +1,7 @@
 package it.snel.passkeychain.provider
 
 import android.app.Activity
+import androidx.fragment.app.FragmentActivity
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -10,23 +11,28 @@ import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
 import androidx.credentials.provider.PendingIntentHandler
 import it.snel.passkeychain.webauthn.Assertion
+import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.store.PasskeyStore
+import it.snel.passkeychain.store.UserUnlock
+import androidx.credentials.provider.ProviderGetCredentialRequest
 import org.json.JSONObject
 
 /**
  * Invoked (via the provider's PendingIntent) once the user has picked one of our
- * passkeys in the system credential sheet. Produces the signed assertion and
- * hands it back to the Credential Manager.
+ * passkeys in the system credential sheet. Asks the user to unlock (screen lock
+ * or biometric), and only then produces the signed assertion and hands it back
+ * to the Credential Manager.
  */
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-class GetAssertionActivity : Activity() {
+class GetAssertionActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        runCatching { complete() }.onFailure { fail(it.message ?: "assertion failed") }
+        runCatching { prepare() }.onFailure { fail(it.message ?: "assertion failed") }
     }
 
-    private fun complete() {
+    /** Checks the request and finds the passkey, then asks for the unlock before signing. */
+    private fun prepare() {
         val providerRequest = PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
             ?: return fail("no provider request")
         val option = providerRequest.credentialOptions
@@ -38,6 +44,16 @@ class GetAssertionActivity : Activity() {
         val passkey = PasskeyStore(applicationContext).load()
             .firstOrNull { it.credentialId == credId && it.rpId == rpId } ?: return fail("credential not found")
 
+        UserUnlock.prompt(
+            this,
+            title = "Sign in to ${passkey.rpName.ifBlank { passkey.rpId }}",
+            subtitle = passkey.label,
+            onSuccess = { runCatching { sign(providerRequest, option, passkey) }.onFailure { fail(it.message ?: "assertion failed") } },
+            onError = { _, message -> fail(message) },
+        )
+    }
+
+    private fun sign(providerRequest: ProviderGetCredentialRequest, option: GetPublicKeyCredentialOption, passkey: Passkey) {
         val requestJson = JSONObject(option.requestJson)
         val challenge = requestJson.optString("challenge") // base64url
         val clientDataHash = option.clientDataHash

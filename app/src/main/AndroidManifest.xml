@@ -29,7 +29,9 @@
         android:theme="@style/Theme.PassKeyChain"
         tools:targetApi="34">
 
-        <activity android:name=".hybrid.HybridSignInActivity" android:exported="false" />
+        <!-- not recreated on rotation: that would restart the tunnel and lose the unlock -->
+        <activity android:name=".hybrid.HybridSignInActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
@@ -50,6 +52,7 @@
         <activity
             android:name=".provider.GetAssertionActivity"
             android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
 

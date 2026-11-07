@@ -1,15 +1,9 @@
 package it.snel.passkeychain.hybrid
 
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
-import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -52,12 +46,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import it.snel.passkeychain.hybrid.CtapAuthenticator.Decision
 import it.snel.passkeychain.hybrid.CtapAuthenticator.GetAssertionRequest
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.store.PasskeyStore
+import it.snel.passkeychain.store.UserUnlock
 import it.snel.passkeychain.ui.AppIcons
 import it.snel.passkeychain.ui.SiteAvatar
 import it.snel.passkeychain.ui.theme.PassKeyChainTheme
@@ -155,43 +149,26 @@ class HybridSignInActivity : FragmentActivity() {
     /** Asks for the screen lock (fingerprint, face or PIN/pattern/password); only then may the worker sign. */
     private fun unlockAndSign(pk: Passkey) {
         val future = pending ?: return
-        val authenticators = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-            BIOMETRIC_STRONG or DEVICE_CREDENTIAL
-        else BIOMETRIC_WEAK or DEVICE_CREDENTIAL // STRONG + device credential is unsupported on Android 9 and 10
-        if (BiometricManager.from(this).canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
-            ui = Ui.Failed(
-                "Set a screen lock first",
-                "Signing in with a passkey requires a screen lock (PIN, pattern, password or fingerprint) on this phone.",
-            )
-            future.complete(Decision.Denied)
-            return
-        }
         val back = ui as? Ui.Choose
         ui = Ui.Unlocking(pk)
-        val prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+        UserUnlock.prompt(
+            this,
+            title = "Sign in to ${pk.rpName.ifBlank { pk.rpId }}",
+            subtitle = pk.label,
+            description = "Confirm it's you to sign in on your computer",
+            onSuccess = {
                 ui = Ui.Signing(pk)
                 future.complete(Decision.Sign(pk))
-            }
-
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                val cancelled = errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
-                    errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON || errorCode == BiometricPrompt.ERROR_CANCELED
+            },
+            onError = { cancelled, message ->
                 if (cancelled && back != null) {
                     ui = back // back to the choice; the browser keeps waiting
                 } else {
-                    ui = Ui.Failed(if (cancelled) "Cancelled" else "Could not unlock", errString.toString())
+                    ui = if (!UserUnlock.available(this)) Ui.Failed("Set a screen lock first", UserUnlock.NO_SCREEN_LOCK)
+                    else Ui.Failed(if (cancelled) "Cancelled" else "Could not unlock", message)
                     future.complete(Decision.Denied)
                 }
-            }
-        })
-        prompt.authenticate(
-            BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Sign in to ${pk.rpName.ifBlank { pk.rpId }}")
-                .setSubtitle(pk.label)
-                .setDescription("Confirm it's you to sign in on your computer")
-                .setAllowedAuthenticators(authenticators)
-                .build(),
+            },
         )
     }
 
