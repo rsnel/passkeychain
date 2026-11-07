@@ -146,8 +146,8 @@ Bitwarden, your passwords too). Delete it once it is imported.
 ## Your own tunnel server
 
 [`server/`](server/) has a tunnel server in plain Python and a script to find
-a hostname for it, so sign-ins need not pass through Google's server. The
-app setting to use it is still to come.
+a hostname for it, so sign-ins need not pass through Google's server. Choose
+it in the app under menu → *Tunnel server* (with Google as a fallback).
 
 ## Project layout
 

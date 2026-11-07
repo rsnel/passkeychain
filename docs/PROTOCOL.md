@@ -152,6 +152,22 @@ Chrome:  wss://cable.ua5v.com/cable/connect/<hex(routingId)>/<hex(tunnelId)>
 The tunnelId is lowercase hex, no dashes. The routingId is the 3-byte value
 the server assigns (also lowercase hex, 6 characters).
 
+Other tunnel servers **[chromium]**: the browser connects to the server
+whose number the phone put in EID bytes 14–15. Numbers 0–255 are a list built
+into the browser (QR field 2 says how long the browser's list is). For
+256–65535 the browser computes the hostname (`tunnelserver::DecodeDomain`):
+
+```text
+digest = SHA-256("caBLEv2 tunnel server domain" || number (2 bytes, LE) || 0x00)
+v      = digest[0..8] as a little-endian 64-bit integer
+tld    = ["com", "org", "net", "info"][v & 3]
+label  = base32 ("a"-"z", "2"-"7") of v >> 2, least significant 5 bits first
+host   = "cable." + label + "." + tld        (266 -> cable.wufkweyy3uaxb.com)
+```
+
+PassKeyChain can use such a server (Tunnel server setting; `server/` has a
+server and a script that lists the names). **[unverified]** against Chrome so far.
+
 WebSocket upgrade **[verified]**:
 
 - Send the header `Sec-WebSocket-Protocol: fido.cable`. **Without it the
@@ -179,7 +195,7 @@ The EID plaintext is 16 bytes:
 | 0 | `0x00` |
 | 1–10 | 10 fresh random bytes (`kNonceSize` = 10), new for every sign-in |
 | 11–13 | The 3-byte routing ID from `X-Cable-Routing-Id` |
-| 14–15 | The 2-byte tunnel server domain; 0 for `cable.ua5v.com`. **[unverified]** The byte order: earlier notes said big-endian, but with the value 0 no run can tell; check Chromium's `eid::FromComponents` before using another domain. |
+| 14–15 | The 2-byte tunnel server domain, little-endian: 0 for `cable.ua5v.com`. Chromium copies its `uint16_t` with `memcpy` (`eid::FromComponents`), so native byte order, which is little-endian on phones and PCs. **[chromium]** Numbers 256–65535 are computed hostnames; see [section 4](#4-tunnel-server-websocket-setup). |
 
 The 20-byte BLE payload **[verified]**:
 

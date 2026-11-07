@@ -10,6 +10,8 @@ import javax.crypto.spec.SecretKeySpec
 class HybridTransport(
     private val ble: BleAdvertiser,
     private val tunnel: TunnelClient,
+    /** Tunnel servers to try in order ([TunnelDomains] numbers); the next one only if the previous is unreachable. */
+    private val servers: List<Int> = listOf(TunnelDomains.GOOGLE),
     /** Reports how far the exchange is, for the progress list on screen. */
     private val progress: (Progress) -> Unit = {},
 ) {
@@ -26,6 +28,9 @@ class HybridTransport(
     class SignInFailure(message: String, cause: Throwable? = null) : Exception(message, cause)
 
     @Volatile private var openTunnel: TunnelClient.NewTunnel? = null
+    /** The tunnel server this sign-in used, once connected. */
+    @Volatile var usedHost: String? = null
+        private set
     @Volatile private var cancelled = false
 
     /** Stops a running [authenticate] (the user closed the screen): closes the tunnel, ending any wait. */
@@ -68,17 +73,20 @@ class HybridTransport(
     /**
      * The 16-byte EID plaintext (Chromium eid::FromComponents):
      *   byte 0: 0x00 | bytes 1-10: random nonce | bytes 11-13: routing ID |
-     *   bytes 14-15: tunnel server domain (0 = cable.ua5v.com).
+     *   bytes 14-15: tunnel server domain, little-endian (0 = cable.ua5v.com;
+     *   Chromium copies its uint16_t as is, which is little-endian on phones and PCs).
      * The same bytes are the HKDF salt for the Noise PSK.
      */
-    fun buildEidPlaintext(routingId: ByteArray): ByteArray {
+    fun buildEidPlaintext(routingId: ByteArray, domain: Int = TunnelDomains.GOOGLE): ByteArray {
         require(routingId.size == 3) { "routingId must be 3 bytes" }
         val plaintextEid = ByteArray(16)
         val nonce = ByteArray(10)
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 1, 10)
         System.arraycopy(routingId, 0, plaintextEid, 11, 3)
-        // byte 0 and bytes 14-15 stay zero
+        plaintextEid[14] = (domain and 0xFF).toByte()
+        plaintextEid[15] = (domain ushr 8).toByte()
+        // byte 0 stays zero
         return plaintextEid
     }
 
@@ -114,9 +122,32 @@ class HybridTransport(
         val peer65 = NoiseHandshake.decompress(qr.peerPublicKey)
 
         // 1. Open /cable/new/ first: the routing ID for the advert comes from its response headers.
-        val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
-        progress(Progress.TunnelOpening(java.net.URI(newTunnelUrl).host))
-        val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
+        //    The first tunnel server that answers; the advert tells the browser which one.
+        val tunnelPath = "/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
+        val failures = mutableListOf<SignInFailure>()
+        var connected: Pair<Int, TunnelClient.NewTunnel>? = null
+        for (domain in servers) {
+            val host = TunnelDomains.hostname(domain) ?: continue
+            progress(Progress.TunnelOpening(host))
+            try {
+                connected = domain to tunnel.connectNewTunnel("wss://$host$tunnelPath")
+                usedHost = host
+                break
+            } catch (e: SignInFailure) {
+                if (cancelled) throw SignInFailure("Cancelled.")
+                failures += e
+            }
+        }
+        val (domain, newTunnel) = connected ?: throw when {
+            failures.size == 1 -> failures[0]
+            failures.isEmpty() -> SignInFailure("No tunnel server is set.")
+            else -> SignInFailure(
+                "Could not reach the tunnel servers " +
+                    servers.mapNotNull(TunnelDomains::hostname).joinToString(" or ") +
+                    ". Check the phone's internet connection.",
+                failures.last(),
+            )
+        }
         openTunnel = newTunnel
         if (cancelled) {
             newTunnel.close()
@@ -125,7 +156,7 @@ class HybridTransport(
         progress(Progress.TunnelOpen)
 
         // 2. The EID plaintext, and from exactly those bytes the Noise PSK.
-        val eidPlaintext = buildEidPlaintext(newTunnel.routingId)
+        val eidPlaintext = buildEidPlaintext(newTunnel.routingId, domain)
         val psk = hkdf(qr.qrSecret, eidPlaintext, label(3), 32)
         it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: eidPlaintext = " + eidPlaintext.joinToString("") { "%02x".format(it) })
         it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: psk          = " + psk.joinToString("") { "%02x".format(it) })

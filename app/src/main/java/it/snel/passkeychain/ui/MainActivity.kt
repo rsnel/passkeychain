@@ -48,6 +48,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -102,6 +103,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import it.snel.passkeychain.R
 import it.snel.passkeychain.hybrid.HybridSignInActivity
+import it.snel.passkeychain.hybrid.TunnelSettings
 import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.io.Cxf
 import it.snel.passkeychain.io.ImportMerge
@@ -205,6 +207,7 @@ private fun MainScreen(store: PasskeyStore) {
     var about by remember { mutableStateOf(false) }
     var exportChoice by remember { mutableStateOf(false) }
     var importChoice by remember { mutableStateOf(false) }
+    var tunnelDialog by remember { mutableStateOf(false) }
     var exportPassword by remember { mutableStateOf<String?>(null) } // null: unencrypted
     var pendingImport by remember { mutableStateOf<PendingImport?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -325,6 +328,11 @@ private fun MainScreen(store: PasskeyStore) {
                                 menuOpen = false
                                 scope.launch { historyShown = withContext(Dispatchers.IO) { history.load() } }
                             },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Tunnel server") },
+                            leadingIcon = { Icon(Icons.Rounded.Settings, null) },
+                            onClick = { menuOpen = false; tunnelDialog = true },
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
@@ -463,6 +471,7 @@ private fun MainScreen(store: PasskeyStore) {
         )
     }
 
+    if (tunnelDialog) TunnelServerDialog(TunnelSettings(ctx), onDismiss = { tunnelDialog = false })
     if (importChoice) ImportDialog(
         onDismiss = { importChoice = false },
         onFile = { importChoice = false; importFile() },
@@ -726,7 +735,11 @@ private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onC
                                 if (!isTransfer && e.account.isNotBlank()) Text(e.account)
                                 Text(what)
                                 Text(formatTime(e.time), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (e.detail.isNotBlank()) Text(e.detail, color = if (isTransfer) MaterialTheme.colorScheme.onSurfaceVariant else red)
+                                if (e.detail.isNotBlank()) Text(
+                                    e.detail,
+                                    color = if (isTransfer || e.outcome == HistoryEntry.Outcome.SignedIn || e.outcome == HistoryEntry.Outcome.Created)
+                                        MaterialTheme.colorScheme.onSurfaceVariant else red,
+                                )
                             }
                         },
                         modifier = Modifier.padding(horizontal = 8.dp).semantics(mergeDescendants = true) {},

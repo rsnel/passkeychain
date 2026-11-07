@@ -401,7 +401,7 @@ class HybridSignInActivity : FragmentActivity() {
                 done(Step.PhoneHello, Step.Request)
             },
         )
-        val transport = HybridTransport(ble, tunnel) { p ->
+        val transport = HybridTransport(ble, tunnel, TunnelSettings(this).order()) { p ->
             when (p) {
                 is HybridTransport.Progress.TunnelOpening -> runOnUiThread { tunnelHost = p.host }
                 HybridTransport.Progress.TunnelOpen -> done(Step.Tunnel, Step.Bluetooth)
@@ -414,8 +414,11 @@ class HybridSignInActivity : FragmentActivity() {
                 val response = transport.authenticate(qr, creator) { request -> choose(request) }
                 Dbg.d(TAG, "authenticate() returned status 0x%02x".format(response[0]))
                 when (response[0].toInt() and 0xFF) {
-                    CtapAuthenticator.CTAP2_OK ->
-                        record(if (createdPasskey) HistoryEntry.Outcome.Created else HistoryEntry.Outcome.SignedIn)
+                    CtapAuthenticator.CTAP2_OK -> record(
+                        if (createdPasskey) HistoryEntry.Outcome.Created else HistoryEntry.Outcome.SignedIn,
+                        // worth noting only when it was not Google's server
+                        transport.usedHost?.takeIf { it != TunnelDomains.hostname(TunnelDomains.GOOGLE) }?.let { "Via $it" } ?: "",
+                    )
                     CtapAuthenticator.CTAP2_ERR_CREDENTIAL_EXCLUDED -> record(HistoryEntry.Outcome.Failed, "Already has a passkey on this phone.")
                     CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED -> record(HistoryEntry.Outcome.Denied)
                     CtapAuthenticator.CTAP2_ERR_NO_CREDENTIALS -> record(HistoryEntry.Outcome.Failed, "No passkey for this site.")

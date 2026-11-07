@@ -20,8 +20,7 @@ What it does not change:
 
 **Status:** both scripts are tested against a standard WebSocket client (11
 unit tests, plus Node's built-in WebSocket as the browser). Not tested yet
-with a real phone and Chrome. PassKeyChain does not have the "Tunnel server"
-setting yet.
+with a real phone and Chrome.
 
 ## How the browser finds your server
 
@@ -31,6 +30,10 @@ Bluetooth broadcast. Numbers 0–255 are a fixed list built into the browser
 number, for example 266 → `cable.wufkweyy3uaxb.com`. You cannot choose the
 name, only the number. So: find a number whose name is still free, and
 register it.
+
+In PassKeyChain: menu → *Tunnel server*. Choose your own server as first
+choice (type its number to check the name, or search the list) and Google as
+second choice, used when yours can't be reached.
 
 This is Chromium's scheme (`tunnelserver::DecodeDomain`). Whether Safari and
 Firefox also accept computed names is not known yet.

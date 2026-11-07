@@ -3,6 +3,7 @@ package it.snel.passkeychain
 import it.snel.passkeychain.hybrid.CtapAuthenticator
 import it.snel.passkeychain.hybrid.FidoQr
 import it.snel.passkeychain.hybrid.HybridTransport
+import it.snel.passkeychain.hybrid.TunnelDomains
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -81,5 +82,43 @@ class HybridTransportTest {
         assertTrue(e is HybridTransport.SignInFailure)
         assertEquals(0, ble.started) // nothing broadcast
         assertTrue(tunnel.closed >= 1)
+    }
+
+    /** [FakeTunnel], but hosts in [unreachable] fail as if the server were down. */
+    private class PartlyReachable(requests: List<ByteArray>, val unreachable: Set<String>) : HybridTransport.TunnelClient {
+        val inner = FakeTunnel(requests)
+        val urls = mutableListOf<String>()
+        override fun connectNewTunnel(tunnelUrl: String): HybridTransport.TunnelClient.NewTunnel {
+            urls += tunnelUrl
+            if (java.net.URI(tunnelUrl).host in unreachable) throw HybridTransport.SignInFailure("Could not reach ${java.net.URI(tunnelUrl).host}.")
+            return inner.connectNewTunnel(tunnelUrl)
+        }
+    }
+
+    @Test fun fallsBackToTheSecondServer() {
+        val own = TunnelDomains.hostname(266)!!
+        val tunnel = PartlyReachable(listOf(getAssertion()), unreachable = setOf(own))
+        val transport = HybridTransport(FakeBle(), tunnel, listOf(266, TunnelDomains.GOOGLE))
+        transport.authenticate(qr) { CtapAuthenticator.Decision.NoCredentials }
+        assertEquals(listOf("cable.wufkweyy3uaxb.com", "cable.ua5v.com"), tunnel.urls.map { java.net.URI(it).host })
+        assertTrue(tunnel.urls.all { it.matches(Regex("wss://[a-z0-9.]+/cable/new/[0-9a-f]{32}")) })
+        assertEquals("cable.ua5v.com", transport.usedHost)
+    }
+
+    @Test fun bothServersUnreachableNamesBoth() {
+        val tunnel = PartlyReachable(listOf(getAssertion()), unreachable = setOf("cable.wufkweyy3uaxb.com", "cable.ua5v.com"))
+        val e = runCatching {
+            HybridTransport(FakeBle(), tunnel, listOf(266, TunnelDomains.GOOGLE)).authenticate(qr) { CtapAuthenticator.Decision.Denied }
+        }.exceptionOrNull()
+        assertTrue(e is HybridTransport.SignInFailure)
+        assertTrue(e!!.message!!.contains("cable.wufkweyy3uaxb.com or cable.ua5v.com"))
+    }
+
+    @Test fun eidCarriesTheServerNumberLittleEndian() {
+        val transport = HybridTransport(FakeBle(), FakeTunnel(emptyList()))
+        val eid = transport.buildEidPlaintext(byteArrayOf(1, 2, 3), 266) // 0x010A
+        assertEquals(0x0A.toByte(), eid[14])
+        assertEquals(0x01.toByte(), eid[15])
+        assertEquals(0.toByte(), transport.buildEidPlaintext(byteArrayOf(1, 2, 3))[14]) // Google: 0
     }
 }
