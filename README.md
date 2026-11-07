@@ -77,11 +77,14 @@ Works like Kaartscan:
 - Debug builds are signed with the committed `app/debug.keystore` (standard
   debug credentials), so every debug build installs over the previous one.
 
-Release builds are prepared but not used yet: pushing a `v*` tag would build
-`assembleRelease`, signed via the repository secrets `KEYSTORE_BASE64`,
-`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` (locally: copy
-`keystore.properties.example` to `keystore.properties`), and publish it as a
-GitHub release that the release app follows via `/releases/latest`.
+**Releases** come from `v*` tags: the version is set by hand in
+`AndroidManifest.xml` (CI checks that the tag matches), the APK is signed via
+the repository secrets `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`,
+`KEY_PASSWORD` (locally: copy `keystore.properties.example` to
+`keystore.properties`) and published as a GitHub release, which the release
+app follows via `/releases/latest`. Download:
+[latest release](https://github.com/rsnel/passkeychain/releases/latest).
+The debug app has a grey icon, so the two are easy to tell apart.
 
 ## Import and export
 
