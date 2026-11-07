@@ -1,18 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- PassKeyChain launcher monochrome layer: a key whose bow is threaded on a key ring.
-     Generated from the same path data as docs/assets/logo.svg. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- PassKeyChain themed icon: shield outline, crown and keys in one colour -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <group android:pivotX="50.5" android:pivotY="50.5" android:scaleX="0.8" android:scaleY="0.8"
-        android:translateX="3.5" android:translateY="3.5">
-        <path android:strokeColor="#000000" android:strokeWidth="5" android:pathData="M20,33 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0"/>
-        <group android:pivotX="54" android:pivotY="54" android:rotation="45">
-            <path android:fillColor="#000000" android:pathData="M19,54 a15,15 0 1,1 30,0 a15,15 0 1,1 -30,0 Z M28,54 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 Z M50,50 h30 a4,4 0 0 1 4,4 v0 a4,4 0 0 1 -4,4 h-30 a4,4 0 0 1 -4,-4 v-0 a4,4 0 0 1 4,-4 Z M76.5,54 h4.0 a2.5,2.5 0 0 1 2.5,2.5 v8.0 a2.5,2.5 0 0 1 -2.5,2.5 h-4.0 a2.5,2.5 0 0 1 -2.5,-2.5 v-8.0 a2.5,2.5 0 0 1 2.5,-2.5 Z M65.5,54 h2.0 a2.5,2.5 0 0 1 2.5,2.5 v5.0 a2.5,2.5 0 0 1 -2.5,2.5 h-2.0 a2.5,2.5 0 0 1 -2.5,-2.5 v-5.0 a2.5,2.5 0 0 1 2.5,-2.5 Z"/>
-        </group>
-        <group>
-            <clip-path android:pathData="M0,0 L108,108 L0,108 Z"/>
-            <path android:strokeColor="#000000" android:strokeWidth="5" android:pathData="M20,33 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0"/>
-        </group>
-    </group>
+<group android:pivotX="54" android:pivotY="51.25" android:scaleX="0.8" android:scaleY="0.8" android:translateY="2.75"><path android:pathData="M41,27.5 L39.2,14.5 L47.2,20.8 L54,10.5 L60.8,20.8 L68.8,14.5 L67,27.5 C61,25.6 47,25.6 41,27.5 Z" android:fillColor="#FF000000"/><path android:pathData="M54,25 C63,29.5 72,30.5 80,29.5 L80,53 C80,72 68.5,85 54,92 C39.5,85 28,72 28,53 L28,29.5 C36,30.5 45,29.5 54,25 Z M54.00,30.12 C61.56,33.90 69.12,34.74 75.84,33.90 L75.84,53.64 C75.84,69.60 66.18,80.52 54.00,86.40 C41.82,80.52 32.16,69.60 32.16,53.64 L32.16,33.90 C38.88,34.74 46.44,33.90 54.00,30.12 Z" android:fillColor="#FF000000" android:fillType="evenOdd"/><path android:pathData="M46.4,41.0 a7.6,7.6 0 1,0 15.2,0 a7.6,7.6 0 1,0 -15.2,0" android:strokeColor="#FF000000" android:strokeWidth="2.6"/><group android:translateX="49.5" android:translateY="49.0" android:rotation="27" android:scaleX="1.08" android:scaleY="1.08"><path android:pathData="M-5.6,0 a5.6,5.6 0 1,0 11.2,0 a5.6,5.6 0 1,0 -11.2,0 Z M-2.1,-0.6 a2.1,2.1 0 1,1 4.2,0 a2.1,2.1 0 1,1 -4.2,0 Z M-2.1,4.4 L2.1,4.4 L2.1,23.6 C2.1,25.4 -2.1,25.4 -2.1,23.6 Z M1.9,14.8 L5.6,14.8 L5.6,17.8 L1.9,17.8 Z M1.9,19.6 L4.6,19.6 L4.6,22.4 L1.9,22.4 Z" android:fillColor="#FF000000" android:fillType="evenOdd"/></group><group android:translateX="58.5" android:translateY="49.0" android:rotation="-27" android:scaleX="1.08" android:scaleY="1.08"><path android:pathData="M-5.6,0 a5.6,5.6 0 1,0 11.2,0 a5.6,5.6 0 1,0 -11.2,0 Z M-2.1,-0.6 a2.1,2.1 0 1,1 4.2,0 a2.1,2.1 0 1,1 -4.2,0 Z M-2.1,4.4 L2.1,4.4 L2.1,23.6 C2.1,25.4 -2.1,25.4 -2.1,23.6 Z M1.9,14.8 L5.6,14.8 L5.6,17.8 L1.9,17.8 Z M1.9,19.6 L4.6,19.6 L4.6,22.4 L1.9,22.4 Z" android:fillColor="#FF000000" android:fillType="evenOdd"/></group><group android:translateX="54.0" android:translateY="49.5" android:rotation="0" android:scaleX="1.3" android:scaleY="1.3"><path android:pathData="M-5.6,0 a5.6,5.6 0 1,0 11.2,0 a5.6,5.6 0 1,0 -11.2,0 Z M-2.1,-0.6 a2.1,2.1 0 1,1 4.2,0 a2.1,2.1 0 1,1 -4.2,0 Z M-2.1,4.4 L2.1,4.4 L2.1,23.6 C2.1,25.4 -2.1,25.4 -2.1,23.6 Z M1.9,14.8 L5.6,14.8 L5.6,17.8 L1.9,17.8 Z M1.9,19.6 L4.6,19.6 L4.6,22.4 L1.9,22.4 Z" android:fillColor="#FF000000" android:fillType="evenOdd"/></group></group>
 </vector>
