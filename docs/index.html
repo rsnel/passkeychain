@@ -65,6 +65,10 @@
   .shot img{width:100%;height:auto;display:block}
   .shot p{text-align:center;color:var(--muted);font-size:14px;margin:10px 0 0}
   .shot-row.two{grid-template-columns:repeat(2,1fr);max-width:66%;margin:0 auto}
+  .own{display:grid;grid-template-columns:1fr 300px;gap:40px;align-items:center}
+  .own p{margin:0 0 14px}
+  .own code{font-size:.92em}
+  @media (max-width:860px){ .own{grid-template-columns:1fr} .own .shot{max-width:300px;margin:0 auto} }
   .shots h3{text-align:center;margin:48px 0 20px}
 
 
@@ -160,7 +164,7 @@
     </div>
     <div class="twin">
       <p class="note">⚖️ <strong>Sovereignty comes with responsibility.</strong> There is no cloud copy to fall back on: lose the phone, and the passkeys on it are gone unless you kept a backup. Keep a password-protected export somewhere safe. An unencrypted export holds every private key, so treat it like the keys to your house.</p>
-      <p class="note">🌐 <strong>What you don’t control.</strong> Signing in on a computer needs a tunnel server on the internet to bring phone and computer together; for Android phones Google runs it. It only ever sees encrypted data, and it cannot sign anything (<a href="#qr-signin">how that works</a>).</p>
+      <p class="note">🌐 <strong>The meeting point.</strong> Signing in on a computer needs a tunnel server on the internet to bring phone and computer together. By default that is Google’s; it only ever sees encrypted data, and it cannot sign anything (<a href="#qr-signin">how that works</a>). The phone picks the server, so you can also <a href="#own-tunnel">run your own</a>.</p>
     </div>
   </div>
 </section>
@@ -290,6 +294,22 @@
     </div>
 
     <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the open protocol that Android phones and iPhones use for this. Because it is open, an independent app can speak it too: PassKeyChain does all eight steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way. Passkey sovereignty in practice: your key, your phone, the same front door as everyone else.</p>
+  </div>
+</section>
+
+<section id="own-tunnel">
+  <div class="wrap">
+    <h2>Run your own tunnel server</h2>
+    <p class="sub">The phone decides which tunnel server is used, not the website and not the browser. So you can choose one you run yourself.</p>
+    <div class="own">
+      <div>
+        <p>In step&nbsp;2 the phone opens the tunnel, and in step&nbsp;3 its Bluetooth broadcast tells the browser where that tunnel is. The browser simply follows, and the website never learns which server was used. Android phones use Google’s server; PassKeyChain does too, unless you choose another.</p>
+        <p>Browsers can reach more servers than Google’s: for numbers 256 to 65535 they compute a hostname themselves, such as <code>cable.wufkweyy3uaxb.com</code>. PassKeyChain’s source code includes <a href="https://github.com/rsnel/passkeychain/tree/main/server">a small tunnel server in plain Python and a script that lists those names</a>. Find one that is still free, register it, and run the server.</p>
+        <p>Then, in the app, open the menu and choose <strong>Tunnel server</strong>. Pick your own server as first choice (type its number to check that the name is yours), and a second choice, such as Google, for when yours can’t be reached. The Activity log notes every sign-in that went through a server other than Google’s.</p>
+        <p class="note">Sign-ins are encrypted end to end on any tunnel server. Running your own means Google no longer sees when and from where you sign in, and your sign-ins no longer depend on its server. Not yet tried with Chrome on a real server; whether Safari and Firefox accept these computed names is not known yet.</p>
+      </div>
+      <div class="shot"><img src="assets/screen_tunnel.png" alt="The Tunnel server setting in PassKeyChain: first choice cable.wufkweyy3uaxb.com (number 266), and Google’s cable.ua5v.com if that can’t be reached, with a link on how to run your own server" loading="lazy"><p>Your own server first, Google as fallback.</p></div>
+    </div>
   </div>
 </section>
 
