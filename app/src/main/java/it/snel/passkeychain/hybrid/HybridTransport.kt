@@ -105,7 +105,7 @@ class HybridTransport(
      * [chooser] once the browser's request has arrived; nothing is signed
      * before it returns [CtapAuthenticator.Decision.Sign].
      */
-    fun authenticate(qr: FidoQr, chooser: CtapAuthenticator.Chooser): ByteArray {
+    fun authenticate(qr: FidoQr, creator: CtapAuthenticator.Creator? = null, chooser: CtapAuthenticator.Chooser): ByteArray {
         // HKDF labels (Chromium DerivedValueType): 1 EID key, 2 tunnel ID, 3 PSK
         val eidKeyMaterial = hkdf(qr.qrSecret, ByteArray(0), label(1), 64)
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
@@ -137,14 +137,15 @@ class HybridTransport(
             progress(Progress.Broadcasting)
 
             // 4. Noise handshake (on the first receive), then CTAP2 requests until
-            //    the getAssertion has been answered (signed, refused or no passkey).
+            //    the sign-in (getAssertion) or the creation of a passkey
+            //    (makeCredential) has been answered, whatever the answer.
             //    A makeCredential probe or a getInfo before it is answered too.
             val channel = newTunnel.open(peer65, psk)
             while (true) {
                 val request = channel.receive()
-                val response = CtapAuthenticator.handle(request, chooser)
+                val response = CtapAuthenticator.handle(request, creator, chooser)
                 channel.send(response)
-                if ((request[0].toInt() and 0xFF) == CtapAuthenticator.CMD_GET_ASSERTION) return response
+                if (CtapAuthenticator.isFinal(request, canCreate = creator != null)) return response
             }
         } finally {
             ble.stop()

@@ -25,6 +25,12 @@ data class Passkey(
     val counter: Long = 0,
     val discoverable: Boolean = true,
     val creationDate: String = "",
+    /**
+     * Whether a copy exists elsewhere (WebAuthn "backup state", flag BS).
+     * Imported passkeys come from Bitwarden: true. One created on this phone
+     * is false until it has been exported.
+     */
+    val backedUp: Boolean = true,
 ) {
     val label: String get() = userName.ifBlank { userDisplayName.ifBlank { rpId } }
 
@@ -42,5 +48,6 @@ data class Passkey(
         put("counter", counter.toString())
         put("discoverable", discoverable.toString())
         put("creationDate", creationDate)
+        put("backedUp", backedUp)
     }
 }

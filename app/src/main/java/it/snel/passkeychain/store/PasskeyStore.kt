@@ -81,5 +81,6 @@ class PasskeyStore(context: Context) {
         counter = o.optString("counter", "0").toLongOrNull() ?: 0,
         discoverable = o.optString("discoverable", "true").toBoolean(),
         creationDate = o.optString("creationDate", ""),
+        backedUp = o.optBoolean("backedUp", true),
     )
 }

@@ -107,6 +107,8 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import it.snel.passkeychain.hybrid.CtapAuthenticator.Decision
 import it.snel.passkeychain.hybrid.CtapAuthenticator.GetAssertionRequest
+import it.snel.passkeychain.hybrid.CtapAuthenticator.CreateDecision
+import it.snel.passkeychain.hybrid.CtapAuthenticator.MakeCredentialRequest
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.store.PasskeyStore
 import it.snel.passkeychain.store.UserUnlock
@@ -151,6 +153,8 @@ class HybridSignInActivity : FragmentActivity() {
     private var tunnelHost by mutableStateOf<String?>(null)
     private var scanHint by mutableStateOf<String?>(null)
     private var signDetail by mutableStateOf<String?>(null)
+    /** the computer asks to create a passkey instead of signing in */
+    private var creating by mutableStateOf(false)
     private var choice by mutableStateOf<List<Passkey>?>(null)
     /** show "Open settings" (a permission that Android no longer asks for) */
     private var settingsButton by mutableStateOf(false)
@@ -188,6 +192,33 @@ class HybridSignInActivity : FragmentActivity() {
     /** for the history: the site the computer asked for, and the passkey that signed */
     @Volatile private var requestedRp: String? = null
     @Volatile private var signedWith: Passkey? = null
+    @Volatile private var createdPasskey = false
+    /** The worker thread waits on this for the user's decision about a new passkey. */
+    @Volatile private var pendingCreate: CompletableFuture<CreateDecision>? = null
+
+    /** Creating a passkey for the computer: ask, unlock, then save it before the answer goes out. */
+    private val creator = object : CtapAuthenticator.Creator {
+        override fun approve(request: MakeCredentialRequest): CreateDecision {
+            val future = CompletableFuture<CreateDecision>()
+            requestedRp = request.rpId
+            pendingCreate = future
+            runOnUiThread { onCreateRequest(request, future) }
+            return try {
+                future.get(3, TimeUnit.MINUTES)
+            } catch (e: TimeoutException) {
+                set(Step.Sign, State.Failed("No answer in time."))
+                CreateDecision.Denied
+            } finally {
+                pendingCreate = null
+            }
+        }
+
+        override fun store(passkey: Passkey) {
+            PasskeyStore(applicationContext).upsert(passkey)
+            signedWith = passkey
+            createdPasskey = true
+        }
+    }
 
     /** Adds this attempt to the sign-in history (on the worker thread). */
     private fun record(outcome: HistoryEntry.Outcome, detail: String = "") {
@@ -314,12 +345,7 @@ class HybridSignInActivity : FragmentActivity() {
                 scannedQr = qr
                 frozen = runCatching { freeze(code, imageW, imageH) }.getOrNull() // before the camera stops
                 cameraProvider?.unbindAll()
-                if (qr.hint == "mc") {
-                    // the site wants to create a passkey; this app only signs in with imported ones
-                    set(Step.Scan, State.Failed("This QR code is for creating a new passkey. PassKeyChain can only " +
-                        "sign in with passkeys you imported: create the passkey in Bitwarden, then import it."))
-                    return@addOnSuccessListener
-                }
+                creating = qr.hint == "mc" // the site wants a new passkey, not a sign-in
                 done(Step.Scan)
                 checkBluetoothAndStart()
             }
@@ -363,10 +389,12 @@ class HybridSignInActivity : FragmentActivity() {
         this.transport = transport
         Thread({
             try {
-                val response = transport.authenticate(qr) { request -> choose(request) }
+                val response = transport.authenticate(qr, creator) { request -> choose(request) }
                 Dbg.d(TAG, "authenticate() returned status 0x%02x".format(response[0]))
                 when (response[0].toInt() and 0xFF) {
-                    CtapAuthenticator.CTAP2_OK -> record(HistoryEntry.Outcome.SignedIn)
+                    CtapAuthenticator.CTAP2_OK ->
+                        record(if (createdPasskey) HistoryEntry.Outcome.Created else HistoryEntry.Outcome.SignedIn)
+                    CtapAuthenticator.CTAP2_ERR_CREDENTIAL_EXCLUDED -> record(HistoryEntry.Outcome.Failed, "Already has a passkey on this phone.")
                     CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED -> record(HistoryEntry.Outcome.Denied)
                     CtapAuthenticator.CTAP2_ERR_NO_CREDENTIALS -> record(HistoryEntry.Outcome.Failed, "No passkey for this site.")
                     else -> record(HistoryEntry.Outcome.Failed, "CTAP error 0x%02x".format(response[0]))
@@ -376,7 +404,13 @@ class HybridSignInActivity : FragmentActivity() {
                     if (response[0] != 0.toByte() && !failed) {
                         // an answer other than a signature that no step has explained yet
                         val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Sign.ordinal
-                        states[active] = State.Failed("The computer's request could not be handled (CTAP error 0x%02x).".format(response[0]))
+                        states[active] = State.Failed(
+                            when (response[0].toInt() and 0xFF) {
+                                CtapAuthenticator.CTAP2_ERR_UNSUPPORTED_ALGORITHM ->
+                                    "The site asked for a kind of key PassKeyChain cannot make (it makes ES256 keys)."
+                                else -> "The computer's request could not be handled (CTAP error 0x%02x).".format(response[0])
+                            },
+                        )
                     } else if (!failed && signDetail != null) {
                         // all steps ticked: leave the list and the picture up for a moment
                         states[Step.Sign.ordinal] = State.Done
@@ -461,13 +495,43 @@ class HybridSignInActivity : FragmentActivity() {
         )
     }
 
+    /** On the UI thread: refuse a second passkey for the same account, else confirm and unlock. */
+    private fun onCreateRequest(request: MakeCredentialRequest, future: CompletableFuture<CreateDecision>) {
+        creating = true
+        states[Step.KeyExchange.ordinal] = State.Done
+        states[Step.Sign.ordinal] = State.Active
+        val existing = PasskeyStore(applicationContext).load().firstOrNull { request.excludes(it) }
+        if (existing != null) {
+            states[Step.Sign.ordinal] = State.Failed("You already have a passkey for ${request.rpId} on this phone (${existing.label}).")
+            future.complete(CreateDecision.Excluded)
+            return
+        }
+        val account = request.userName.ifBlank { request.userDisplayName.ifBlank { request.rpId } }
+        signDetail = account
+        UserUnlock.prompt(
+            this,
+            title = "Create a passkey for ${request.rpName.ifBlank { request.rpId }}",
+            subtitle = account,
+            description = "Confirm it's you to save a new passkey on this phone",
+            onSuccess = { future.complete(CreateDecision.Create) },
+            onError = { cancelled, message ->
+                states[Step.Sign.ordinal] = State.Failed(
+                    if (!UserUnlock.available(this)) UserUnlock.NO_SCREEN_LOCK else if (cancelled) "Cancelled." else message,
+                )
+                future.complete(CreateDecision.Denied)
+            },
+        )
+    }
+
     private fun cancelAndClose() {
+        pendingCreate?.complete(CreateDecision.Denied)
         pending?.complete(Decision.Denied)
         finish()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        pendingCreate?.complete(CreateDecision.Denied)
         pending?.complete(Decision.Denied)
         transport?.cancel() // ends the worker's wait for the computer at once
         bleAdvertiser?.stop()
@@ -523,7 +587,8 @@ class HybridSignInActivity : FragmentActivity() {
                 StepRow(Step.Tunnel, "Open a tunnel" + (tunnelHost?.let { " via $it" } ?: ""), "Encrypted connection through a relay on the internet")
                 StepRow(Step.Bluetooth, "Send a Bluetooth broadcast", "So the computer knows this phone is nearby")
                 StepRow(Step.KeyExchange, "Noise key exchange", "Waiting for the computer to connect and agree on keys")
-                StepRow(Step.Sign, "Sign", signDetail?.let { "As $it, after you unlock" } ?: "Choose a passkey and unlock")
+                if (creating) StepRow(Step.Sign, "Create a passkey", signDetail?.let { "For $it, after you unlock" } ?: "Confirm and unlock")
+                else StepRow(Step.Sign, "Sign", signDetail?.let { "As $it, after you unlock" } ?: "Choose a passkey and unlock")
                 Spacer(Modifier.weight(1f))
                 if (failed) {
                     Row(Modifier.align(Alignment.End)) {
@@ -647,7 +712,8 @@ class HybridSignInActivity : FragmentActivity() {
         }
         val spoken = when (verdict) {
             Verdict.Verifying -> "Scanned sign-in QR code. Verifying."
-            Verdict.Approved -> "Scanned sign-in QR code. Approved: you are signed in on the computer."
+            Verdict.Approved -> if (creating) "Scanned QR code. Approved: the new passkey is saved on this phone."
+                else "Scanned sign-in QR code. Approved: you are signed in on the computer."
             Verdict.Denied -> "Scanned sign-in QR code. Denied."
         }
         Box(Modifier.fillMaxSize().semantics {

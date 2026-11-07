@@ -24,6 +24,13 @@ object Assertion {
         val signature: ByteArray,
     )
 
+    /**
+     * UP and UV (the user unlocked), BE (every passkey here can be backed up:
+     * it can be exported to Bitwarden; BE must never change for a credential),
+     * and BS while a copy exists elsewhere.
+     */
+    fun flagsFor(passkey: Passkey): Int = FLAG_UP or FLAG_UV or FLAG_BE or (if (passkey.backedUp) FLAG_BS else 0)
+
     /** authenticatorData = sha256(rpId) || flags || signCount(BE) */
     fun authenticatorData(rpId: String, flags: Int, signCount: Long): ByteArray {
         val rpIdHash = sha256(rpId.toByteArray(Charsets.UTF_8))
@@ -57,7 +64,7 @@ object Assertion {
         challengeB64Url: String,
         origin: String,
         clientDataHash: ByteArray? = null,
-        flags: Int = FLAG_UP or FLAG_UV or FLAG_BE or FLAG_BS,
+        flags: Int = flagsFor(passkey),
     ): Result {
         val priv = CredentialKey.decodePrivate(passkey.keyValuePkcs8)
         val authData = authenticatorData(passkey.rpId, flags, passkey.counter)

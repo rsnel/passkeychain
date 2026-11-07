@@ -8,6 +8,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.withResumed
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -171,9 +174,17 @@ private fun MainScreen(store: PasskeyStore) {
     val history = remember { SignInHistory(ctx) }
     var historyShown by remember { mutableStateOf<List<HistoryEntry>?>(null) } // null: closed
 
-    LaunchedEffect(Unit) {
-        passkeys = withContext(Dispatchers.IO) { store.load() }
-        loaded = true
+    // load the list, and again whenever the app comes back to the front: a
+    // passkey may have been created on the sign-in screen meanwhile
+    DisposableEffect(activity) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) scope.launch {
+                passkeys = withContext(Dispatchers.IO) { store.load() }
+                loaded = true
+            }
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { activity.lifecycle.removeObserver(observer) }
     }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -206,6 +217,8 @@ private fun MainScreen(store: PasskeyStore) {
                         withContext(Dispatchers.Default) { BitwardenEncrypted.encrypt(Bitwarden.export(all), password) }
                     } else Bitwarden.export(all)
                     ctx.contentResolver.openOutputStream(uri)!!.use { it.write(content.toByteArray()) }
+                    // passkeys created on this phone now have a copy elsewhere (backup state)
+                    if (all.any { !it.backedUp }) store.save(all.map { it.copy(backedUp = true) })
                     (if (all.size == 1) "Exported 1 passkey" else "Exported ${all.size} passkeys") +
                         if (password != null) ", encrypted" else ""
                 }.getOrElse { "Export failed: ${it.message}" }

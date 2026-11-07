@@ -4,6 +4,12 @@ import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.util.B64
 import it.snel.passkeychain.webauthn.Assertion
 import it.snel.passkeychain.webauthn.Cbor
+import it.snel.passkeychain.webauthn.CredentialKey
+import java.security.KeyPairGenerator
+import java.security.SecureRandom
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.time.Instant
 
 /**
  * The CTAP2 side of the authenticator, without any transport or Android code:
@@ -19,6 +25,8 @@ object CtapAuthenticator {
     const val CTAP2_OK = 0x00
     const val CTAP1_ERR_INVALID_COMMAND = 0x01
     const val CTAP2_ERR_INVALID_CBOR = 0x12
+    const val CTAP2_ERR_CREDENTIAL_EXCLUDED = 0x19
+    const val CTAP2_ERR_UNSUPPORTED_ALGORITHM = 0x26
     const val CTAP2_ERR_OPERATION_DENIED = 0x27
     const val CTAP2_ERR_NO_CREDENTIALS = 0x2E
 
@@ -49,16 +57,56 @@ object CtapAuthenticator {
         fun choose(request: GetAssertionRequest): Decision
     }
 
+    /** COSE algorithm ES256 (ECDSA P-256 with SHA-256), the only kind of key this app makes */
+    const val ALG_ES256 = -7L
+    /** the rpId of the makeCredential Chrome sends as a probe; never create a passkey for it */
+    const val PROBE_RP_ID = ".dummy"
+    private const val FLAG_AT = 0x40 // attested credential data included
+
+    /** An authenticatorMakeCredential request: a site asks for a new passkey. */
+    class MakeCredentialRequest(
+        val clientDataHash: ByteArray,
+        val rpId: String,
+        val rpName: String,
+        val userId: ByteArray,
+        val userName: String,
+        val userDisplayName: String,
+        /** COSE algorithms the site accepts, in its order of preference */
+        val algorithms: List<Long>,
+        /** credential ids the site already has for this account: do not make another one */
+        val excludeList: List<ByteArray>,
+        val residentKey: Boolean,
+    ) {
+        /** Whether [pk] is one the site says this account already has. */
+        fun excludes(pk: Passkey): Boolean =
+            pk.rpId == rpId && excludeList.any { it.contentEquals(credentialIdBytes(pk)) }
+    }
+
+    sealed interface CreateDecision {
+        /** Make the passkey; the user has confirmed and unlocked. */
+        data object Create : CreateDecision
+        /** The account already has a passkey on this phone. */
+        data object Excluded : CreateDecision
+        /** The user cancelled or could not unlock. */
+        data object Denied : CreateDecision
+    }
+
+    interface Creator {
+        /** Called when the request arrives; may block until the user has decided. */
+        fun approve(request: MakeCredentialRequest): CreateDecision
+        /** Saves the new passkey. Called before the answer goes out; throw to abort. */
+        fun store(passkey: Passkey)
+    }
+
     /**
      * Answers one CTAP2 command (command byte + CBOR parameters). Nothing is
      * signed before [chooser] returned [Decision.Sign].
      */
-    fun handle(command: ByteArray, chooser: Chooser): ByteArray {
+    fun handle(command: ByteArray, creator: Creator? = null, chooser: Chooser): ByteArray {
         if (command.isEmpty()) return byteArrayOf(CTAP1_ERR_INVALID_COMMAND.toByte())
         return when (command[0].toInt() and 0xFF) {
             CMD_GET_INFO -> byteArrayOf(CTAP2_OK.toByte()) + getInfo()
-            // this app uses existing passkeys, it does not create new ones
-            CMD_MAKE_CREDENTIAL -> byteArrayOf(CTAP2_ERR_NO_CREDENTIALS.toByte())
+            CMD_MAKE_CREDENTIAL -> makeCredential(command, creator)
             CMD_GET_ASSERTION -> {
                 val request = runCatching { parseGetAssertion(command) }
                     .getOrElse { return byteArrayOf(CTAP2_ERR_INVALID_CBOR.toByte()) }
@@ -84,7 +132,100 @@ object CtapAuthenticator {
         3 to ByteArray(16),                                    // aaguid: none
         4 to mapOf<Any, Any>("rk" to true, "uv" to true),      // options
         9 to listOf("cable", "hybrid", "internal"),            // transports
+        10 to listOf(mapOf<Any, Any>("alg" to ALG_ES256, "type" to "public-key")), // algorithms
     ))
+
+    /**
+     * Whether [command] ends the exchange once answered: a getAssertion, or a
+     * real makeCredential (not Chrome's probe) when this phone can create
+     * passkeys. Probes and getInfo are answered and the exchange goes on.
+     */
+    fun isFinal(command: ByteArray, canCreate: Boolean): Boolean = when (command.firstOrNull()?.toInt()?.and(0xFF)) {
+        CMD_GET_ASSERTION -> true
+        CMD_MAKE_CREDENTIAL -> canCreate && runCatching { parseMakeCredential(command).rpId != PROBE_RP_ID }.getOrDefault(false)
+        else -> false
+    }
+
+    private fun makeCredential(command: ByteArray, creator: Creator?): ByteArray {
+        // without a creator (on-device, tests) every makeCredential gets the old answer
+        if (creator == null) return byteArrayOf(CTAP2_ERR_NO_CREDENTIALS.toByte())
+        val request = runCatching { parseMakeCredential(command) }
+            .getOrElse { return byteArrayOf(CTAP2_ERR_INVALID_CBOR.toByte()) }
+        // Chrome's probe: never a passkey for it
+        if (request.rpId == PROBE_RP_ID) return byteArrayOf(CTAP2_ERR_NO_CREDENTIALS.toByte())
+        if (ALG_ES256 !in request.algorithms) return byteArrayOf(CTAP2_ERR_UNSUPPORTED_ALGORITHM.toByte())
+        return when (creator.approve(request)) {
+            CreateDecision.Create -> {
+                val (passkey, publicKey) = newPasskey(request)
+                creator.store(passkey) // saved before the site learns about it
+                byteArrayOf(CTAP2_OK.toByte()) + attestation(passkey, publicKey)
+            }
+            CreateDecision.Excluded -> byteArrayOf(CTAP2_ERR_CREDENTIAL_EXCLUDED.toByte())
+            CreateDecision.Denied -> byteArrayOf(CTAP2_ERR_OPERATION_DENIED.toByte())
+        }
+    }
+
+    /**
+     * Parses authenticatorMakeCredential: {1: clientDataHash, 2: rp, 3: user,
+     * 4: pubKeyCredParams, 5: excludeList, 6: extensions, 7: options, ...}.
+     */
+    fun parseMakeCredential(command: ByteArray): MakeCredentialRequest {
+        require(command.isNotEmpty() && (command[0].toInt() and 0xFF) == CMD_MAKE_CREDENTIAL) { "not a makeCredential command" }
+        @Suppress("UNCHECKED_CAST")
+        val params = Cbor.decode(command.copyOfRange(1, command.size)) as Map<Any?, Any?>
+        fun param(k: Int) = params[k.toLong()] ?: params[k]
+        val rp = param(2) as Map<*, *>
+        val user = param(3) as Map<*, *>
+        val algorithms = (param(4) as? List<*>).orEmpty().mapNotNull { (it as? Map<*, *>)?.get("alg") as? Long }
+        val exclude = (param(5) as? List<*>).orEmpty().mapNotNull { (it as? Map<*, *>)?.get("id") as? ByteArray }
+        val options = param(7) as? Map<*, *>
+        return MakeCredentialRequest(
+            clientDataHash = param(1) as ByteArray,
+            rpId = rp["id"] as String,
+            rpName = rp["name"] as? String ?: "",
+            userId = user["id"] as ByteArray,
+            userName = user["name"] as? String ?: "",
+            userDisplayName = user["displayName"] as? String ?: "",
+            algorithms = algorithms,
+            excludeList = exclude,
+            residentKey = options?.get("rk") as? Boolean ?: true,
+        )
+    }
+
+    /** A new P-256 passkey for [request]; backup state false: no copy exists yet. */
+    fun newPasskey(request: MakeCredentialRequest): Pair<Passkey, ECPublicKey> {
+        val kp = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val id = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val passkey = Passkey(
+            credentialId = B64.url(id),
+            keyValuePkcs8 = B64.std(kp.private.encoded),
+            rpId = request.rpId,
+            rpName = request.rpName,
+            userHandle = B64.url(request.userId),
+            userName = request.userName,
+            userDisplayName = request.userDisplayName,
+            counter = 0,
+            discoverable = request.residentKey,
+            creationDate = Instant.now().toString(),
+            backedUp = false,
+        )
+        return passkey to (kp.public as ECPublicKey)
+    }
+
+    /**
+     * The makeCredential response with "none" attestation: {1: "none",
+     * 2: authenticatorData with the attested credential data, 3: {}}.
+     * authenticatorData = rpIdHash || flags (UP UV AT BE) || counter 0 ||
+     * aaguid (16 zero bytes) || id length (2 bytes) || id || COSE public key.
+     */
+    fun attestation(passkey: Passkey, publicKey: ECPublicKey): ByteArray {
+        val id = credentialIdBytes(passkey)
+        val flags = Assertion.FLAG_UP or Assertion.FLAG_UV or FLAG_AT or Assertion.FLAG_BE // not yet backed up: no BS
+        val authData = Assertion.authenticatorData(passkey.rpId, flags, passkey.counter) +
+            ByteArray(16) + byteArrayOf((id.size ushr 8).toByte(), id.size.toByte()) + id +
+            CredentialKey.coseEs256(publicKey)
+        return Cbor.encode(mapOf<Any, Any>(1 to "none", 2 to authData, 3 to emptyMap<Any, Any>()))
+    }
 
     /** Parses authenticatorGetAssertion: {1: rpId, 2: clientDataHash, 3: allowList, ...}. */
     fun parseGetAssertion(command: ByteArray): GetAssertionRequest {

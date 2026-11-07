@@ -335,6 +335,7 @@ getInfo response (nested CBOR map), as PassKeyChain sends it:
          the phone really unlocks before signing.
   key 9: transports, ["cable", "hybrid", "internal"]
          ("cable" is not a WebAuthn transport name; Chrome ignores it)
+  key 10: algorithms, [{"alg": -7, "type": "public-key"}]
 
 Key 2 (extensions) is omitted: advertise only extensions you implement.
 (Earlier versions sent ["prf"] without implementing PRF.)
@@ -445,9 +446,41 @@ Chrome normally uses the post-handshake copy and does not ask. [spec]
 --- makeCredential (0x01) ---
 
 Chrome sometimes sends a makeCredential with the dummy rpId ".dummy" (see
-quirk Q). An authenticator that does not create credentials answers
-makeCredential with a single status byte 0x2E (NO_CREDENTIALS), a 1-byte
-plaintext encrypted normally. [verified for the probe]
+quirk Q). Never create a credential for it: answer with a single status byte
+0x2E (NO_CREDENTIALS), a 1-byte plaintext encrypted normally, and keep
+reading: the real request follows. [verified for the probe]
+
+A real makeCredential (QR hint "mc") creates a passkey. The CBOR map
+contains [spec]:
+  1: clientDataHash (32 bytes)
+  2: rp {"id": string, "name": string}
+  3: user {"id": bytes, "name": string, "displayName": string}
+  4: pubKeyCredParams, e.g. [{"alg": -7, "type": "public-key"}]
+  5: excludeList (credential descriptors the account already has), optional
+  7: options, e.g. {"rk": true}
+
+The phone:
+  - answers 0x26 (UNSUPPORTED_ALGORITHM) if alg -7 (ES256) is not offered;
+  - answers 0x19 (CREDENTIAL_EXCLUDED) if it holds a credential from the
+    excludeList for that rpId;
+  - otherwise asks the user (and unlocks), generates a P-256 key and a
+    random 16-byte credential id, STORES the passkey, and only then answers
+    (0x27 if the user refuses).
+
+Response, "none" attestation [spec]:
+  {1: "none", 2: authenticatorData, 3: {}}
+  authenticatorData = SHA-256(rpId) || flags || signCount (4 bytes, 0) ||
+                      aaguid (16 bytes, zeros) || credential id length
+                      (2 bytes, big-endian) || credential id ||
+                      COSE_Key {1: 2, 3: -7, -1: 1, -2: x, -3: y}
+  flags = UP | UV | AT (0x40) | BE = 0x4D. BS stays clear: the new passkey
+  exists only on this phone until it is exported; its later assertions
+  send BE without BS (0x0D) until then, and 0x1D afterwards. BE never
+  changes.
+
+[unverified] against Chrome so far: the creation flow has unit tests that
+check the encoding and that a later assertion verifies against the
+attested public key, but has not yet been run against a real site.
 
 ======================================================
 10. PADDING AND FRAMING SUMMARY
@@ -652,7 +685,8 @@ Interoperating is not enough; these make the flow safe.
     rpId (and the account) to the user before signing, so the user can see
     what is being approved.
   - Ask the user (unlock) for every signature; sign nothing before the
-    request has arrived and the user has chosen and unlocked.
+    request has arrived and the user has chosen and unlocked. The same for
+    creating a passkey: show the site and account, unlock, then create.
   - Reject the browser's ephemeral key if it is not a point on P-256
     before using it in ECDH.
   - Consider rejecting stale QR codes using QR field 3 (the time). Allow
@@ -742,6 +776,7 @@ EID cipher            = AES-256-ECB (one block) + truncated HMAC-SHA256
 CTAP2 commands        = 0x01 makeCredential, 0x02 getAssertion,
                         0x04 getInfo, 0x0B selection
 CTAP2 status          = 0x00 OK, 0x01 invalid command, 0x12 invalid CBOR,
+                        0x19 credential excluded, 0x26 unsupported algorithm,
                         0x27 operation denied, 0x2E no credentials
 
 ======================================================
