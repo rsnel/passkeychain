@@ -387,11 +387,26 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                 4 to linkedMapOf<Any, Any>("uv" to true, "rk" to true), // options
                 9 to listOf("cable", "hybrid", "internal") // transports
             ))
-            val postHandshake = Cbor.encode(linkedMapOf<Any, Any>(
+            val postHandshakeCbor = Cbor.encode(linkedMapOf<Any, Any>(
                 1 to getInfo,                             // getInfo, CBOR byte string
                 3 to listOf("ctap")                       // features
             ))
-            Log.d(TAG, "post-handshake plaintext ${postHandshake.size} bytes: ${hex(postHandshake)}")
+            Log.d(TAG, "post-handshake CBOR ${postHandshakeCbor.size} bytes: ${hex(postHandshakeCbor)}")
+
+            // Chromium's v2_authenticator.cc sends the post-handshake message
+            // through EncodePaddedCBORMap before encrypting it. The padded
+            // format is: CBOR || zero bytes || uint16-le(num_padding), with
+            // the total padded size a multiple of kPostHandshakeMsgPaddingGranularity (512).
+            val granularity = 512
+            val totalUnpadded = postHandshakeCbor.size + 2  // +2 for the uint16 length
+            val paddedSize = ((totalUnpadded + granularity - 1) / granularity) * granularity
+            val numPadding = paddedSize - postHandshakeCbor.size - 2
+            val postHandshake = ByteArray(paddedSize)
+            System.arraycopy(postHandshakeCbor, 0, postHandshake, 0, postHandshakeCbor.size)
+            // numPadding as uint16 little-endian at the last two bytes
+            postHandshake[paddedSize - 2] = (numPadding and 0xFF).toByte()
+            postHandshake[paddedSize - 1] = ((numPadding ushr 8) and 0xFF).toByte()
+            Log.d(TAG, "post-handshake padded ${postHandshake.size} bytes (padding=$numPadding): ${hex(postHandshake)}")
             val postHandshakeCt = encryptTransport(postHandshake)
             val postHandshakeRecord = byteArrayOf(
                 (postHandshakeCt.size ushr 8).toByte(),
