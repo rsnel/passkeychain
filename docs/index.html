@@ -137,7 +137,7 @@
       <div class="card">
         <div class="ic">🔑</div>
         <h3>Import passkeys</h3>
-        <p>Reads the passkeys from a Bitwarden JSON export (<code>fido2Credentials</code>), including password-protected encrypted exports. The parser is tolerant of PEM, base64 PKCS#8, or raw-scalar key encodings.</p>
+        <p>Reads the passkeys from a Bitwarden JSON export (<code>fido2Credentials</code>), including password-protected encrypted exports, and from the FIDO Credential Exchange Format, also straight from another app through Android’s credential transfer.</p>
       </div>
       <div class="card">
         <div class="ic">🛡️</div>
@@ -152,7 +152,7 @@
       <div class="card">
         <div class="ic">🔗</div>
         <h3>Sign in on your computer</h3>
-        <p>Scan the QR code a computer shows when it asks for a passkey, and PassKeyChain completes the sign-in over Bluetooth and an encrypted tunnel. Tested with a real Microsoft sign-in. <a href="#qr-signin">How QR sign-in works →</a></p>
+        <p>Scan the QR code a computer shows when it asks for a passkey, and PassKeyChain completes the sign-in over Bluetooth and an encrypted tunnel. Tested with a real Microsoft sign-in. A site’s “create a passkey” code makes a new passkey on the phone. <a href="#qr-signin">How QR sign-in works →</a></p>
       </div>
       <div class="card">
         <div class="ic">📤</div>
@@ -162,7 +162,7 @@
       <div class="card">
         <div class="ic">⬆️</div>
         <h3>Self-updating</h3>
-        <p>Every push to main produces a new debug build; the app checks for it and installs it in place.</p>
+        <p>Checks GitHub for a newer version and installs it in place. A short, encrypted sign-in history shows what signed in where, and when.</p>
       </div>
     </div>
     <p class="note" style="margin-top:22px">🔒 <strong>Security &amp; scope.</strong> PassKeyChain manages credentials <em>you already own</em>. Private keys never leave your device; there is no server and no telemetry. Passkey portability follows the FIDO Alliance Credential Exchange direction (2025). Exports can be encrypted with a password in Bitwarden’s format; treat an unencrypted export like any password-vault backup.</p>
