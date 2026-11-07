@@ -265,10 +265,10 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                 val payload = pt.copyOfRange(1, pt.size)
                 Log.d(TAG, "receive(): type byte = $typeByte, payload ${payload.size} bytes: ${hex(payload)}")
                 when (typeByte) {
-                    0x01 -> return payload  // MessageType::kCTAP
-                    0x02 -> { Log.d(TAG, "receive(): ignoring kJSON message"); continue }
-                    0x03 -> { Log.w(TAG, "receive(): kShutdown from Chrome"); throw HybridTransport.DeviceStageMissing("Chrome requested shutdown") }
-                    0x04 -> { Log.d(TAG, "receive(): ignoring kUpdate message"); continue }
+                    0x00 -> return payload  // MessageType::kCTAP
+                    0x01 -> { Log.d(TAG, "receive(): ignoring kJSON message"); continue }
+                    0x02 -> { Log.w(TAG, "receive(): kShutdown from Chrome"); throw HybridTransport.DeviceStageMissing("Chrome requested shutdown") }
+                    0x03 -> { Log.d(TAG, "receive(): ignoring kUpdate message"); continue }
                     else -> { Log.w(TAG, "receive(): unknown type byte $typeByte, returning payload"); return payload }
                 }
             }
@@ -278,7 +278,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             if (!handshakeDone) throw IllegalStateException("handshake not done")
             // Every CTAP2 message over the tunnel is prefixed with a MessageType
             // byte. 0x01 = kCTAP. See TunnelTransport::Write in v2_authenticator.cc.
-            val withType = byteArrayOf(0x01) + plaintext
+            val withType = byteArrayOf(0x00) + plaintext
             val ct = encryptTransport(withType)
             Log.d(TAG, "transport send ${ct.size} bytes (plaintext ${plaintext.size} + type byte): ${hex(ct)}")
             ws.send(okio.ByteString.of(*ct))
@@ -399,7 +399,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                 1 to listOf("FIDO_2_0", "FIDO_2_1"),     // versions
                 2 to listOf("prf"),                       // extensions
                 3 to ByteArray(16),                       // aaguid
-                4 to linkedMapOf<Any, Any>("uv" to true, "rk" to true), // options
+                4 to linkedMapOf<Any, Any>("rk" to true, "uv" to true), // options (canonical: rk < uv)
                 9 to listOf("cable", "hybrid", "internal") // transports
             ))
             val postHandshakeCbor = Cbor.encode(linkedMapOf<Any, Any>(
