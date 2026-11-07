@@ -104,25 +104,27 @@ class UpdateChecker(private val context: Context) {
      * newer than this app, or null. Best effort through the public API (60
      * requests an hour without a token); any failure just means "no".
      */
-    private fun buildInProgress(): Long? = try {
-        val conn = open("$API/actions/runs?branch=main&event=push&per_page=5")
-        conn.setRequestProperty("Accept", "application/vnd.github+json")
-        try {
-            if (conn.responseCode !in 200..299) return null
-            val runs = JSONObject(conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
-                .getJSONArray("workflow_runs")
-            (0 until runs.length()).map { runs.getJSONObject(it) }
-                .filter { it.optString("status") != "completed" }
-                .map { it.getLong("run_number") }
-                .filter { it > currentBuild }
-                .maxOrNull()
-        } finally {
-            conn.disconnect()
+    private fun buildInProgress(): Long? {
+        return try {
+            val conn = open("$API/actions/runs?branch=main&event=push&per_page=5")
+            conn.setRequestProperty("Accept", "application/vnd.github+json")
+            try {
+                if (conn.responseCode !in 200..299) return null
+                val runs = JSONObject(conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
+                    .getJSONArray("workflow_runs")
+                (0 until runs.length()).map { runs.getJSONObject(it) }
+                    .filter { it.optString("status") != "completed" }
+                    .map { it.getLong("run_number") }
+                    .filter { it > currentBuild }
+                    .maxOrNull()
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            null
+        } catch (e: JSONException) {
+            null
         }
-    } catch (e: IOException) {
-        null
-    } catch (e: JSONException) {
-        null
     }
 
     private fun latestRelease(): Release {
