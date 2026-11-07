@@ -104,6 +104,7 @@ import it.snel.passkeychain.R
 import it.snel.passkeychain.hybrid.HybridSignInActivity
 import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.io.Cxf
+import it.snel.passkeychain.io.ImportMerge
 import androidx.credentials.providerevents.ProviderEventsManager
 import androidx.credentials.providerevents.exception.ImportCredentialsCancellationException
 import androidx.credentials.providerevents.exception.ImportCredentialsException
@@ -178,10 +179,9 @@ private suspend fun importFromAnotherApp(activity: FragmentActivity, store: Pass
 /** Imports an unencrypted Bitwarden JSON export or a Credential Exchange (CXF) document; returns the message to show. */
 private fun importJson(store: PasskeyStore, text: String): String {
     val res = if (Cxf.hasPasskeys(text)) Cxf.parse(text) else Bitwarden.parse(text)
-    res.imported.forEach { store.upsert(it) }
-    val n = res.imported.size
-    return (if (n == 1) "Imported 1 passkey" else "Imported $n passkeys") +
-        if (res.skipped.isNotEmpty()) ", skipped ${res.skipped.size}" else ""
+    val merged = ImportMerge.merge(store.load(), res.imported)
+    if (merged.changed) store.save(merged.passkeys)
+    return merged.message(res.skipped.size)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

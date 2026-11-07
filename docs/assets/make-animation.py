@@ -161,6 +161,8 @@ def build_scene(k=1.0):
     o.append(token(1, "M318,478 L690,428", k=k))   # just below the beam, clear of its label
     o.append(token(2, RIGHT_TO_SERVER, k=k))
     o.append(ripples(690, 470, 3))
+    # the broadcast itself, from the phone to the computer, under the "Bluetooth" label
+    o.append(token(3, "M650,596 Q515,622 385,590", k=k))
     o.append(token(4, C2P, k=k))
     o.append(token(5, P2C, k=k))
     o.append(token(6, C2P, k=k))
