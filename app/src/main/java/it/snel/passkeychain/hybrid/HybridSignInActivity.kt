@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -305,9 +304,9 @@ class HybridSignInActivity : FragmentActivity() {
                 Dbg.d(TAG, "authenticate() returned")
                 runOnUiThread {
                     if (!failed && signDetail != null) {
+                        // all steps ticked: leave the list and the picture up for a moment
                         states[Step.Sign.ordinal] = State.Done
-                        Toast.makeText(applicationContext, "Signed in on your computer as $signDetail", Toast.LENGTH_LONG).show()
-                        finish()
+                        window.decorView.postDelayed({ if (!isFinishing) finish() }, 1000)
                     }
                 }
             } catch (e: Exception) {
