@@ -93,7 +93,12 @@ class HybridTransport(
         return ciphertext + hmac.copyOfRange(0, 4)
     }
 
-    fun authenticate(qr: FidoQr, passkey: Passkey): ByteArray {
+    /**
+     * Runs the whole exchange for [qr]. Which passkey signs is decided by
+     * [chooser] once the browser's request has arrived; nothing is signed
+     * before it returns [CtapAuthenticator.Decision.Sign].
+     */
+    fun authenticate(qr: FidoQr, chooser: CtapAuthenticator.Chooser): ByteArray {
         val salt = ByteArray(0)
         val eidKeyMaterial = hkdf(qr.qrSecret, salt, byteArrayOf(1, 0, 0, 0), 64)
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
@@ -137,7 +142,7 @@ class HybridTransport(
             // 3. Wait for the Noise handshake + CTAP2 request on the already-open WebSocket.
             val channel = newTunnel.channel
             val request = channel.receive()
-            val response = buildCtapResponse(request, passkey)
+            val response = CtapAuthenticator.handle(request, chooser)
             channel.send(response)
             channel.close()
             return response
@@ -146,41 +151,9 @@ class HybridTransport(
         }
     }
 
-    fun buildCtapResponse(ctapRequest: ByteArray, passkey: Passkey): ByteArray {
-        require(ctapRequest.isNotEmpty()) { "empty CTAP request" }
-        return when (ctapRequest[0].toInt() and 0xFF) {
-            0x01 -> byteArrayOf(0x2E.toByte()) // makeCredential -> NO_CREDENTIALS
-            0x02 -> buildGetAssertionResponse(ctapRequest, passkey)
-            else -> byteArrayOf(0x01.toByte()) // CTAP1_ERR_INVALID_COMMAND
-        }
-    }
-
-    fun buildGetAssertionResponse(ctapRequest: ByteArray, passkey: Passkey): ByteArray {
-        require(ctapRequest.isNotEmpty() && ctapRequest[0].toInt() == 0x02) { "not a getAssertion command" }
-        @Suppress("UNCHECKED_CAST")
-        val params = Cbor.decode(ctapRequest.copyOfRange(1, ctapRequest.size)) as Map<Any?, Any?>
-        val rpId = (params[1L] ?: params[1]) as String
-        val clientDataHash = (params[2L] ?: params[2]) as ByteArray
-        require(rpId == passkey.rpId) { "rpId mismatch" }
-
-        // The response's credential descriptor must echo the credentialId
-        // Chrome asked for in its allow list, not the passkey's stored id.
-        // Chrome treats a response for a different credential as invalid.
-        @Suppress("UNCHECKED_CAST")
-        val allow = (params[3L] ?: params[3]) as? List<Map<Any?, Any?>>
-        @Suppress("UNCHECKED_CAST")
-        val requestedCredId = allow?.firstOrNull()?.get("id") as? ByteArray
-        val credIdBytes = requestedCredId ?: b64urlToBytes(passkey.credentialId)
-        android.util.Log.d("HybridTransport", "buildGetAssertion: requestedCredId=" +
-            (requestedCredId?.let { hexOf(it) } ?: "null") +
-            " passkeyCredId=" + passkey.credentialId)
-
-        val r = Assertion.create(passkey = passkey, challengeB64Url = "", origin = "", clientDataHash = clientDataHash)
-        val credential = linkedMapOf<Any, Any>("id" to credIdBytes, "type" to "public-key")
-        // No key 4 (user) for a non-discoverable getAssertion, matching Chromium's CTAP2Processor.
-        val resp = linkedMapOf<Any, Any>(1 to credential, 2 to r.authenticatorData, 3 to r.signature)
-        return byteArrayOf(0x00) + Cbor.encode(resp)
-    }
+    /** Signs [ctapRequest] with [passkey] without asking anyone; for tests. */
+    fun buildGetAssertionResponse(ctapRequest: ByteArray, passkey: Passkey): ByteArray =
+        CtapAuthenticator.handle(ctapRequest) { CtapAuthenticator.Decision.Sign(passkey) }
 
     private fun hexOf(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
 

@@ -127,6 +127,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    // screen-lock / fingerprint check before signing
+    implementation("androidx.biometric:biometric:1.1.0")
+
     // Passkey / Credential Manager provider API
     implementation("androidx.credentials:credentials:1.3.0")
 

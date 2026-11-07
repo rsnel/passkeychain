@@ -114,9 +114,11 @@ class QrScanActivity : ComponentActivity() {
     }
 
     private fun finishWith(qr: String?) {
-        val intent = android.content.Intent(this, it.snel.passkeychain.hybrid.HybridSignInActivity::class.java)
+        if (qr != null) { // closing the scanner without a QR just goes back
+            val intent = android.content.Intent(this, it.snel.passkeychain.hybrid.HybridSignInActivity::class.java)
             intent.putExtra("qr_text", qr)
             startActivity(intent)
+        }
         setResult(if (qr != null) RESULT_OK else RESULT_CANCELED)
         finish()
     }

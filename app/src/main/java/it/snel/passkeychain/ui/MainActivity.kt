@@ -394,7 +394,7 @@ private fun PasskeyItem(pk: Passkey, shape: RoundedCornerShape, onClick: () -> U
 
 /** A coloured circle with the site's initial; the hue is derived from the rpId so it is stable. */
 @Composable
-private fun SiteAvatar(pk: Passkey, size: Dp = 40.dp) {
+internal fun SiteAvatar(pk: Passkey, size: Dp = 40.dp) {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val hue = ((pk.rpId.hashCode() % 360) + 360) % 360
     val bg = Color.hsl(hue.toFloat(), 0.55f, if (dark) 0.32f else 0.86f)

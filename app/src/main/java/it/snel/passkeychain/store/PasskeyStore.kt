@@ -4,6 +4,8 @@ import android.content.Context
 import it.snel.passkeychain.model.Passkey
 import org.json.JSONArray
 import org.json.JSONObject
+import it.snel.passkeychain.io.Bitwarden
+import it.snel.passkeychain.util.B64
 import java.io.File
 
 /**
@@ -12,6 +14,10 @@ import java.io.File
  * session; every mutation re-encrypts and rewrites the file atomically.
  */
 class PasskeyStore(context: Context) {
+
+    private companion object {
+        val GUID = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    }
 
     private val file = File(context.filesDir, "passkeys.enc")
     private val lock = Any()
@@ -52,8 +58,17 @@ class PasskeyStore(context: Context) {
     fun candidatesFor(rpId: String, allowCredentialIds: Set<String>? = null): List<Passkey> =
         load().filter { it.rpId == rpId && (allowCredentialIds == null || it.credentialId in allowCredentialIds) }
 
+    /**
+     * Imports before build 57 stored Bitwarden's GUID credential ids as text
+     * (base64url-decoding "0f1e2d3c-…" and re-encoding it gives the same
+     * string back) instead of as the 16 bytes the GUID stands for, so those ids
+     * never matched what the browser asks for. Fix them on load.
+     */
+    private fun normalizeCredentialId(id: String): String =
+        if (GUID.matches(id)) B64.url(Bitwarden.credentialIdBytes(id)) else id
+
     private fun parse(o: JSONObject): Passkey = Passkey(
-        credentialId = o.getString("credentialId"),
+        credentialId = normalizeCredentialId(o.getString("credentialId")),
         keyType = o.optString("keyType", "public-key"),
         keyAlgorithm = o.optString("keyAlgorithm", "ECDSA"),
         keyCurve = o.optString("keyCurve", "P-256"),

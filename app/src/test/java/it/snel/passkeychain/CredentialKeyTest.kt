@@ -1,6 +1,8 @@
 package it.snel.passkeychain
 
 import it.snel.passkeychain.hybrid.FidoQr
+import it.snel.passkeychain.hybrid.CtapAuthenticator
+import it.snel.passkeychain.hybrid.CtapAuthenticator.Decision
 import it.snel.passkeychain.hybrid.HybridTransport
 import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.util.B64
@@ -262,5 +264,86 @@ class CredentialKeyTest {
             i += n
         }
         return sb.toString()
+    }
+
+    // ---- CTAP: decide first, sign after -----------------------------------------
+
+    private fun pkWith(priv: ECPrivateKey, id: ByteArray, rpId: String = "login.microsoft.com", user: String = "r.snel@asg.nl") =
+        it.snel.passkeychain.model.Passkey(
+            credentialId = B64.url(id), keyValuePkcs8 = B64.std(priv.encoded), rpId = rpId,
+            userHandle = B64.url(user.toByteArray()), userName = user,
+        )
+
+    private fun getAssertion(rpId: String, cdh: ByteArray, allow: List<ByteArray>): ByteArray {
+        val params = linkedMapOf<Any, Any>(1 to rpId, 2 to cdh)
+        if (allow.isNotEmpty()) params[3] = allow.map { linkedMapOf<Any, Any>("id" to it, "type" to "public-key") }
+        return byteArrayOf(0x02) + Cbor.encode(params)
+    }
+
+    private val cdh = MessageDigest.getInstance("SHA-256").digest("challenge".toByteArray())
+
+    @Test fun refusalSignsNothing() {
+        var asked = 0
+        val req = getAssertion("login.microsoft.com", cdh, emptyList())
+        assertArrayEquals(byteArrayOf(0x27), CtapAuthenticator.handle(req) { asked++; Decision.Denied })
+        assertArrayEquals(byteArrayOf(0x2E), CtapAuthenticator.handle(req) { asked++; Decision.NoCredentials })
+        assertEquals(2, asked)
+    }
+
+    @Test fun requestIsParsedBeforeAnyChoice() {
+        val a = ByteArray(16) { 1 }; val b = ByteArray(16) { 2 }
+        var seen: CtapAuthenticator.GetAssertionRequest? = null
+        CtapAuthenticator.handle(getAssertion("login.microsoft.com", cdh, listOf(a, b))) { seen = it; Decision.Denied }
+        val r = seen!!
+        assertEquals("login.microsoft.com", r.rpId)
+        assertArrayEquals(cdh, r.clientDataHash)
+        assertEquals(2, r.allowList.size)
+        assertArrayEquals(b, r.allowList[1])
+    }
+
+    @Test fun candidatesFollowSiteAndAllowList() {
+        val (priv, _) = freshKey()
+        val mine = pkWith(priv, ByteArray(16) { 1 })
+        val other = pkWith(priv, ByteArray(16) { 2 }, user = "other@asg.nl")
+        val elsewhere = pkWith(priv, ByteArray(16) { 1 }, rpId = "github.com")
+        val withList = CtapAuthenticator.parseGetAssertion(getAssertion("login.microsoft.com", cdh, listOf(ByteArray(16) { 1 })))
+        assertEquals(listOf(true, false, false), listOf(mine, other, elsewhere).map { withList.accepts(it) })
+        val noList = CtapAuthenticator.parseGetAssertion(getAssertion("login.microsoft.com", cdh, emptyList()))
+        assertEquals(listOf(true, true, false), listOf(mine, other, elsewhere).map { noList.accepts(it) })
+    }
+
+    @Test fun chosenPasskeySignsWithItsOwnId() {
+        val (priv1, pub1) = freshKey(); val (priv2, pub2) = freshKey()
+        val first = pkWith(priv1, ByteArray(16) { 1 }); val second = pkWith(priv2, ByteArray(16) { 2 }, user = "other@asg.nl")
+        val req = getAssertion("login.microsoft.com", cdh, listOf(ByteArray(16) { 1 }, ByteArray(16) { 2 }))
+        val resp = CtapAuthenticator.handle(req) { Decision.Sign(second) }
+        assertEquals(0x00.toByte(), resp[0])
+        @Suppress("UNCHECKED_CAST")
+        val m = Cbor.decode(resp.copyOfRange(1, resp.size)) as Map<Any?, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val cred = (m[1L] ?: m[1]) as Map<Any?, Any?>
+        assertArrayEquals(ByteArray(16) { 2 }, cred["id"] as ByteArray)
+        val authData = (m[2L] ?: m[2]) as ByteArray; val sig = (m[3L] ?: m[3]) as ByteArray
+        assertTrue(Signature.getInstance("SHA256withECDSA").apply { initVerify(pub2); update(authData + cdh) }.verify(sig))
+        assertTrue(!Signature.getInstance("SHA256withECDSA").apply { initVerify(pub1); update(authData + cdh) }.verify(sig))
+        assertTrue("no user entity when the site named the credential", (m[4L] ?: m[4]) == null)
+    }
+
+    @Test fun usernamelessSignInReturnsUserHandle() {
+        val (priv, _) = freshKey()
+        val pk = pkWith(priv, ByteArray(16) { 1 })
+        val resp = CtapAuthenticator.handle(getAssertion("login.microsoft.com", cdh, emptyList())) { Decision.Sign(pk) }
+        @Suppress("UNCHECKED_CAST")
+        val m = Cbor.decode(resp.copyOfRange(1, resp.size)) as Map<Any?, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val user = (m[4L] ?: m[4]) as Map<Any?, Any?>
+        assertArrayEquals("r.snel@asg.nl".toByteArray(), user["id"] as ByteArray)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun passkeyForAnotherSiteIsNeverUsed() {
+        val (priv, _) = freshKey()
+        val wrong = pkWith(priv, ByteArray(16) { 1 }, rpId = "github.com")
+        CtapAuthenticator.handle(getAssertion("login.microsoft.com", cdh, emptyList())) { Decision.Sign(wrong) }
     }
 }
