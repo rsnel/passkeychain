@@ -25,6 +25,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import it.snel.passkeychain.store.SignInHistory
+import it.snel.passkeychain.model.HistoryEntry
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.produceState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -161,6 +168,8 @@ private fun MainScreen(store: PasskeyStore) {
     var pendingImport by remember { mutableStateOf<PendingImport?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var debugLogging by remember { mutableStateOf(Dbg.enabled) }
+    val history = remember { SignInHistory(ctx) }
+    var historyShown by remember { mutableStateOf<List<HistoryEntry>?>(null) } // null: closed
 
     LaunchedEffect(Unit) {
         passkeys = withContext(Dispatchers.IO) { store.load() }
@@ -247,6 +256,14 @@ private fun MainScreen(store: PasskeyStore) {
                                 )
                             },
                         )
+                        DropdownMenuItem(
+                            text = { Text("Sign-in history") },
+                            leadingIcon = { Icon(AppIcons.History, null) },
+                            onClick = {
+                                menuOpen = false
+                                scope.launch { historyShown = withContext(Dispatchers.IO) { history.load() } }
+                            },
+                        )
                         HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Check for updates") },
@@ -294,9 +311,26 @@ private fun MainScreen(store: PasskeyStore) {
         }
     }
 
+    historyShown?.let { entries ->
+        HistorySheet(
+            entries,
+            onDismiss = { historyShown = null },
+            onClear = {
+                scope.launch {
+                    withContext(Dispatchers.IO) { history.clear() }
+                    historyShown = emptyList()
+                }
+            },
+        )
+    }
+
     selected?.let { pk ->
+        val lastUsed by produceState<Long?>(null, pk) {
+            value = withContext(Dispatchers.IO) { HistoryEntry.lastUsed(history.load(), pk.credentialId, pk.rpId) }
+        }
         PasskeySheet(
             pk,
+            lastUsed = lastUsed,
             onDismiss = { selected = null },
             onCopied = { scope.launch { snackbar.showSnackbar("Credential ID copied") } },
             onDelete = {
@@ -553,11 +587,77 @@ private fun AppIcon(size: Dp) {
     }
 }
 
+// ---- sign-in history -------------------------------------------------------------
+
+private fun formatTime(millis: Long): String =
+    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(millis))
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onClear: () -> Unit) {
+    val green = Color(0xFF1E9E5A)
+    val red = Color(0xFFC62828)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.navigationBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Sign-in history", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                if (entries.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear") }
+            }
+            Text(
+                "The last ${HistoryEntry.MAX} sign-ins with PassKeyChain, kept encrypted on this phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            if (entries.isEmpty()) {
+                Text(
+                    "No sign-ins yet.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(24.dp),
+                )
+            } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+                items(entries, key = { it.time.toString() + it.rpId + it.outcome }) { e ->
+                    val ok = e.succeeded
+                    val what = when (e.outcome) {
+                        HistoryEntry.Outcome.SignedIn -> "Signed in"
+                        HistoryEntry.Outcome.Created -> "Passkey created"
+                        HistoryEntry.Outcome.Denied -> "Cancelled"
+                        HistoryEntry.Outcome.Failed -> "Failed"
+                    }
+                    val where = if (e.via == HistoryEntry.Via.Computer) "on a computer" else "on this phone"
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        leadingContent = {
+                            Box(
+                                Modifier.size(28.dp).clip(CircleShape).background(if (ok) green else red),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(if (ok) Icons.Rounded.Check else Icons.Rounded.Close, null, Modifier.size(18.dp), tint = Color.White)
+                            }
+                        },
+                        headlineContent = { Text(e.rpId.ifBlank { "Unknown site" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = {
+                            Column {
+                                Text(listOf(e.account, "$what $where").filter { it.isNotBlank() }.joinToString(" · "))
+                                Text(formatTime(e.time), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (e.detail.isNotBlank()) Text(e.detail, color = red)
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp).semantics(mergeDescendants = true) {},
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
 // ---- details sheet ---------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PasskeySheet(pk: Passkey, onDismiss: () -> Unit, onCopied: () -> Unit, onDelete: () -> Unit) {
+private fun PasskeySheet(pk: Passkey, lastUsed: Long?, onDismiss: () -> Unit, onCopied: () -> Unit, onDelete: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
@@ -583,6 +683,7 @@ private fun PasskeySheet(pk: Passkey, onDismiss: () -> Unit, onCopied: () -> Uni
                 },
             )
             if (pk.creationDate.isNotBlank()) DetailRow(AppIcons.Event, "Created", pk.creationDate.take(10))
+            DetailRow(AppIcons.History, "Last used", lastUsed?.let(::formatTime) ?: "Not with PassKeyChain yet")
             DetailRow(AppIcons.Tag, "Signature counter", pk.counter.toString())
             DetailRow(Icons.Rounded.Lock, "Key", "${pk.keyAlgorithm} ${pk.keyCurve}, encrypted on this phone")
             Spacer(Modifier.height(16.dp))

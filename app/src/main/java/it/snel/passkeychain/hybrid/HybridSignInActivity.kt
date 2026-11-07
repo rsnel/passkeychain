@@ -114,6 +114,8 @@ import it.snel.passkeychain.ui.AppIcons
 import it.snel.passkeychain.ui.SiteAvatar
 import it.snel.passkeychain.ui.theme.PassKeyChainTheme
 import it.snel.passkeychain.util.Dbg
+import it.snel.passkeychain.store.SignInHistory
+import it.snel.passkeychain.model.HistoryEntry
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -183,6 +185,23 @@ class HybridSignInActivity : FragmentActivity() {
 
     private var bleAdvertiser: AndroidBleAdvertiser? = null
     @Volatile private var transport: HybridTransport? = null
+    /** for the history: the site the computer asked for, and the passkey that signed */
+    @Volatile private var requestedRp: String? = null
+    @Volatile private var signedWith: Passkey? = null
+
+    /** Adds this attempt to the sign-in history (on the worker thread). */
+    private fun record(outcome: HistoryEntry.Outcome, detail: String = "") {
+        val pk = signedWith
+        SignInHistory(applicationContext).add(HistoryEntry(
+            time = System.currentTimeMillis(),
+            rpId = requestedRp ?: pk?.rpId ?: "",
+            account = pk?.label ?: "",
+            credentialId = pk?.credentialId ?: "",
+            via = HistoryEntry.Via.Computer,
+            outcome = outcome,
+            detail = detail,
+        ))
+    }
     /** The worker thread waits on this for the user's decision. */
     @Volatile private var pending: CompletableFuture<Decision>? = null
 
@@ -346,6 +365,12 @@ class HybridSignInActivity : FragmentActivity() {
             try {
                 val response = transport.authenticate(qr) { request -> choose(request) }
                 Dbg.d(TAG, "authenticate() returned status 0x%02x".format(response[0]))
+                when (response[0].toInt() and 0xFF) {
+                    CtapAuthenticator.CTAP2_OK -> record(HistoryEntry.Outcome.SignedIn)
+                    CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED -> record(HistoryEntry.Outcome.Denied)
+                    CtapAuthenticator.CTAP2_ERR_NO_CREDENTIALS -> record(HistoryEntry.Outcome.Failed, "No passkey for this site.")
+                    else -> record(HistoryEntry.Outcome.Failed, "CTAP error 0x%02x".format(response[0]))
+                }
                 runOnUiThread {
                     if (isDestroyed) return@runOnUiThread
                     if (response[0] != 0.toByte() && !failed) {
@@ -362,6 +387,11 @@ class HybridSignInActivity : FragmentActivity() {
                 Dbg.e(TAG, "authenticate() failed", e)
                 val message = if (e is HybridTransport.SignInFailure) e.message ?: "The sign-in failed."
                     else "Something went wrong: ${e.message ?: e.javaClass.simpleName}"
+                when {
+                    message != "Cancelled." -> record(HistoryEntry.Outcome.Failed, message)
+                    requestedRp != null -> record(HistoryEntry.Outcome.Denied)
+                    // closed before the computer asked for anything: not worth a history entry
+                }
                 runOnUiThread {
                     if (!failed && !isDestroyed) {
                         val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Sign.ordinal
@@ -377,6 +407,7 @@ class HybridSignInActivity : FragmentActivity() {
     /** Runs on the worker thread when the browser's request arrives; blocks until the user decided. */
     private fun choose(request: GetAssertionRequest): Decision {
         val future = CompletableFuture<Decision>()
+        requestedRp = request.rpId
         pending = future
         runOnUiThread { onRequest(request, future) }
         return try {
@@ -415,7 +446,7 @@ class HybridSignInActivity : FragmentActivity() {
             title = "Sign in to ${pk.rpName.ifBlank { pk.rpId }}",
             subtitle = pk.label,
             description = "Confirm it's you to sign in on your computer",
-            onSuccess = { future.complete(Decision.Sign(pk)) },
+            onSuccess = { signedWith = pk; future.complete(Decision.Sign(pk)) },
             onError = { cancelled, message ->
                 if (cancelled && candidates.size > 1) {
                     signDetail = null

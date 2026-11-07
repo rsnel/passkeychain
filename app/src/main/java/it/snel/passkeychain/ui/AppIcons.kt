@@ -15,6 +15,7 @@ import it.snel.passkeychain.R
 object AppIcons {
     val ChevronRight: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_chevron_right)
     val ContentCopy: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_content_copy)
+    val History: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_history)
     val Event: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_event)
     val FileDownload: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_file_download)
     val FileUpload: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_file_upload)

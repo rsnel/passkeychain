@@ -13,6 +13,8 @@ import androidx.credentials.provider.PendingIntentHandler
 import it.snel.passkeychain.webauthn.Assertion
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.store.PasskeyStore
+import it.snel.passkeychain.store.SignInHistory
+import it.snel.passkeychain.model.HistoryEntry
 import it.snel.passkeychain.store.UserUnlock
 import androidx.credentials.provider.ProviderGetCredentialRequest
 import org.json.JSONObject
@@ -48,8 +50,15 @@ class GetAssertionActivity : FragmentActivity() {
             this,
             title = "Sign in to ${passkey.rpName.ifBlank { passkey.rpId }}",
             subtitle = passkey.label,
-            onSuccess = { runCatching { sign(providerRequest, option, passkey) }.onFailure { fail(it.message ?: "assertion failed") } },
-            onError = { _, message -> fail(message) },
+            onSuccess = {
+                runCatching { sign(providerRequest, option, passkey) }
+                    .onSuccess { record(passkey, HistoryEntry.Outcome.SignedIn) }
+                    .onFailure { record(passkey, HistoryEntry.Outcome.Failed, it.message ?: ""); fail(it.message ?: "assertion failed") }
+            },
+            onError = { cancelled, message ->
+                record(passkey, if (cancelled) HistoryEntry.Outcome.Denied else HistoryEntry.Outcome.Failed, if (cancelled) "" else message)
+                fail(message)
+            },
         )
     }
 
@@ -73,6 +82,15 @@ class GetAssertionActivity : FragmentActivity() {
         PendingIntentHandler.setGetCredentialResponse(data, response)
         setResult(Activity.RESULT_OK, data)
         finish()
+    }
+
+    /** Adds this sign-in on the phone itself to the history. */
+    private fun record(passkey: Passkey, outcome: HistoryEntry.Outcome, detail: String = "") {
+        val entry = HistoryEntry(
+            time = System.currentTimeMillis(), rpId = passkey.rpId, account = passkey.label,
+            credentialId = passkey.credentialId, via = HistoryEntry.Via.ThisPhone, outcome = outcome, detail = detail,
+        )
+        Thread { SignInHistory(applicationContext).add(entry) }.start()
     }
 
     private fun fail(message: String) {
