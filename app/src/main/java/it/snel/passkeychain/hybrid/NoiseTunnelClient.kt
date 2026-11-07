@@ -247,22 +247,40 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                 handshake()
                 handshakeDone = true
             }
-            Log.d(TAG, "receive(): waiting up to 120s for transport ciphertext from Chrome")
-            val ciphertext = incoming.poll(120, TimeUnit.SECONDS)
-                ?: run {
-                    Log.w(TAG, "receive(): timeout, no transport ciphertext from Chrome after post-handshake")
-                    throw HybridTransport.DeviceStageMissing("timeout waiting for transport ciphertext")
+            while (true) {
+                Log.d(TAG, "receive(): waiting up to 120s for transport ciphertext from Chrome")
+                val ciphertext = incoming.poll(120, TimeUnit.SECONDS)
+                    ?: run {
+                        Log.w(TAG, "receive(): timeout, no transport ciphertext from Chrome after post-handshake")
+                        throw HybridTransport.DeviceStageMissing("timeout waiting for transport ciphertext")
+                    }
+                Log.d(TAG, "receive(): got transport ciphertext ${ciphertext.size} bytes: ${hex(ciphertext)}")
+                val pt = decryptTransport(ciphertext)
+                Log.d(TAG, "receive(): decrypted ${pt.size} bytes: ${hex(pt)}")
+                if (pt.isEmpty()) {
+                    Log.w(TAG, "receive(): empty plaintext, continuing")
+                    continue
                 }
-            Log.d(TAG, "receive(): got transport ciphertext ${ciphertext.size} bytes: ${hex(ciphertext)}")
-            val pt = decryptTransport(ciphertext)
-            Log.d(TAG, "receive(): decrypted ${pt.size} bytes: ${hex(pt)}")
-            return pt
+                val typeByte = pt[0].toInt() and 0xFF
+                val payload = pt.copyOfRange(1, pt.size)
+                Log.d(TAG, "receive(): type byte = $typeByte, payload ${payload.size} bytes: ${hex(payload)}")
+                when (typeByte) {
+                    0x01 -> return payload  // MessageType::kCTAP
+                    0x02 -> { Log.d(TAG, "receive(): ignoring kJSON message"); continue }
+                    0x03 -> { Log.w(TAG, "receive(): kShutdown from Chrome"); throw HybridTransport.DeviceStageMissing("Chrome requested shutdown") }
+                    0x04 -> { Log.d(TAG, "receive(): ignoring kUpdate message"); continue }
+                    else -> { Log.w(TAG, "receive(): unknown type byte $typeByte, returning payload"); return payload }
+                }
+            }
         }
 
         override fun send(plaintext: ByteArray) {
             if (!handshakeDone) throw IllegalStateException("handshake not done")
-            val ct = encryptTransport(plaintext)
-            Log.d(TAG, "transport send ${ct.size} bytes: ${hex(ct)}")
+            // Every CTAP2 message over the tunnel is prefixed with a MessageType
+            // byte. 0x01 = kCTAP. See TunnelTransport::Write in v2_authenticator.cc.
+            val withType = byteArrayOf(0x01) + plaintext
+            val ct = encryptTransport(withType)
+            Log.d(TAG, "transport send ${ct.size} bytes (plaintext ${plaintext.size} + type byte): ${hex(ct)}")
             ws.send(okio.ByteString.of(*ct))
         }
 
@@ -412,12 +430,22 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
         private fun encryptTransport(plaintext: ByteArray): ByteArray {
             val key = txKey ?: throw IllegalStateException("no tx key")
+            // Crypter-style padding (from v2_handshake.cc Crypter::Encrypt):
+            // pad to a multiple of 32, last byte = number of zero bytes added.
+            val granularity = 32
+            val paddedSize = ((plaintext.size + 1 + granularity - 1) / granularity) * granularity
+            val numZeros = paddedSize - plaintext.size - 1
+            val padded = ByteArray(paddedSize)
+            System.arraycopy(plaintext, 0, padded, 0, plaintext.size)
+            // bytes [plaintext.size .. paddedSize-2] are already zero
+            padded[paddedSize - 1] = numZeros.toByte()
+            Log.d(TAG, "encryptTransport: plaintext ${plaintext.size} -> padded ${paddedSize} (numZeros=$numZeros)")
             val nonceBytes = ByteArray(12)
             for (i in 0..7) nonceBytes[i] = ((txNonce ushr (8 * i)) and 0xFF).toByte()
             txNonce++
             val c = Cipher.getInstance("AES/GCM/NoPadding")
             c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceBytes))
-            return c.doFinal(plaintext)
+            return c.doFinal(padded)
         }
 
         private fun decryptTransport(ciphertext: ByteArray): ByteArray {
@@ -427,7 +455,13 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             rxNonce++
             val c = Cipher.getInstance("AES/GCM/NoPadding")
             c.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceBytes))
-            return c.doFinal(ciphertext)
+            val padded = c.doFinal(ciphertext)
+            if (padded.isEmpty()) throw IllegalStateException("empty padded plaintext")
+            val paddingLength = padded[padded.size - 1].toInt() and 0xFF
+            if (paddingLength + 1 > padded.size) throw IllegalStateException("invalid Crypter padding length $paddingLength")
+            val plaintext = padded.copyOfRange(0, padded.size - paddingLength - 1)
+            Log.d(TAG, "decryptTransport: padded ${padded.size} -> plaintext ${plaintext.size} (paddingLength=$paddingLength)")
+            return plaintext
         }
     }
 
