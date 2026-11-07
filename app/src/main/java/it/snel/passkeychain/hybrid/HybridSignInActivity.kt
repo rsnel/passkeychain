@@ -15,6 +15,19 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.layout.ContentScale
+import kotlin.math.PI
+import kotlin.math.sin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -120,6 +133,10 @@ class HybridSignInActivity : FragmentActivity() {
     /** show "Open settings" (a permission that Android no longer asks for) */
     private var settingsButton by mutableStateOf(false)
     private var scannedQr: FidoQr? = null
+
+    /** The camera picture at the moment the QR was recognized, with the QR's corners in its pixels. */
+    private class Frozen(val image: ImageBitmap, val quad: List<Offset>)
+    private var frozen by mutableStateOf<Frozen?>(null)
 
     private fun set(step: Step, state: State) = runOnUiThread { states[step.ordinal] = state }
     private fun done(step: Step, next: Step? = null) = runOnUiThread {
@@ -231,20 +248,44 @@ class HybridSignInActivity : FragmentActivity() {
     private fun analyze(proxy: ImageProxy) {
         val media = proxy.image
         if (media == null || scanned) { proxy.close(); return }
-        scanner.process(InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees))
+        val rotation = proxy.imageInfo.rotationDegrees
+        val imageW = if (rotation % 180 == 0) proxy.width else proxy.height // ML Kit's coordinates are upright
+        val imageH = if (rotation % 180 == 0) proxy.height else proxy.width
+        scanner.process(InputImage.fromMediaImage(media, rotation))
             .addOnSuccessListener { codes ->
-                val text = codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue ?: return@addOnSuccessListener
+                val code = codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE && it.rawValue != null } ?: return@addOnSuccessListener
+                val text = code.rawValue!!
                 if (scanned) return@addOnSuccessListener
                 val qr = if (FidoQr.isFidoQr(text)) runCatching { FidoQr.parse(text) }.getOrNull() else null
                 if (qr == null) { scanHint = "That QR code is not a passkey sign-in. Keep scanning."; return@addOnSuccessListener }
                 scanned = true
                 scannedQr = qr
+                frozen = runCatching { freeze(code, imageW, imageH) }.getOrNull() // before the camera stops
                 cameraProvider?.unbindAll()
                 done(Step.Scan)
                 checkBluetoothAndStart()
             }
             .addOnFailureListener { Dbg.w(TAG, "barcode error", it) }
             .addOnCompleteListener { proxy.close() }
+    }
+
+    /**
+     * Takes what the preview shows right now, and maps the QR's corners from the
+     * analysis image to it. Preview and analysis both use CameraX's default 4:3
+     * framing; the preview fills its view (FILL_CENTER): scale, then centre.
+     */
+    private fun freeze(code: Barcode, imageW: Int, imageH: Int): Frozen? {
+        val picture = previewView.bitmap ?: return null
+        val vw = picture.width.toFloat(); val vh = picture.height.toFloat()
+        val scale = maxOf(vw / imageW, vh / imageH)
+        val dx = (vw - imageW * scale) / 2; val dy = (vh - imageH * scale) / 2
+        val corners = code.cornerPoints?.map { Offset(it.x * scale + dx, it.y * scale + dy) }
+            ?: code.boundingBox?.let { b ->
+                listOf(b.left to b.top, b.right to b.top, b.right to b.bottom, b.left to b.bottom)
+                    .map { (x, y) -> Offset(x * scale + dx, y * scale + dy) }
+            }
+            ?: emptyList()
+        return Frozen(picture.asImageBitmap(), corners)
     }
 
     private fun start(qr: FidoQr) {
@@ -360,9 +401,12 @@ class HybridSignInActivity : FragmentActivity() {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
             // upper half: the camera, or what came of the scan
             Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+                val still = frozen
                 if (states[Step.Scan.ordinal] == State.Active) {
                     AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
                     Viewfinder()
+                } else if (still != null) {
+                    Magic(still, animate = !failed)
                 } else {
                     Column(
                         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primaryContainer),
@@ -445,6 +489,85 @@ class HybridSignInActivity : FragmentActivity() {
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (state is State.Failed) scheme.error else scheme.onSurfaceVariant,
                 )
+            }
+        }
+    }
+
+    /** A sparkle along the QR's edge: where on the perimeter (0..1), how far out, size, timing. */
+    private class Sparkle(val along: Float, val out: Float, val size: Float, val phase: Float, val speed: Float)
+
+    /**
+     * The frozen scan picture with a subtle "working on it" effect on the QR:
+     * the rest dims, the code gets a softly pulsing outline, a band of light
+     * sweeps across it and a few sparkles twinkle along its edges.
+     */
+    @Composable
+    private fun Magic(f: Frozen, animate: Boolean) {
+        var time by remember { mutableFloatStateOf(0f) }
+        LaunchedEffect(animate) {
+            if (!animate) return@LaunchedEffect
+            val start = withFrameNanos { it } - (time * 1e9).toLong()
+            while (true) withFrameNanos { time = (it - start) / 1e9f }
+        }
+        val accent = MaterialTheme.colorScheme.primaryContainer
+        val gold = Color(0xFFFFD35C)
+        val sparkles = remember(f) {
+            val rnd = java.util.Random(7)
+            List(12) { Sparkle(rnd.nextFloat(), 6f + 22f * rnd.nextFloat(), 5f + 6f * rnd.nextFloat(), rnd.nextFloat(), 0.35f + 0.4f * rnd.nextFloat()) }
+        }
+        Box(Modifier.fillMaxSize()) {
+            Image(f.image, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+            Canvas(Modifier.fillMaxSize().graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)) {
+                // the picture was taken at the view's size; scale in case the layout changed since
+                val sx = size.width / f.image.width; val sy = size.height / f.image.height
+                val q = f.quad.map { Offset(it.x * sx, it.y * sy) }
+                if (q.size < 4) return@Canvas
+                val code = Path().apply { moveTo(q[0].x, q[0].y); q.drop(1).forEach { lineTo(it.x, it.y) }; close() }
+
+                drawRect(Color.Black.copy(alpha = 0.4f))
+                drawPath(code, Color.Transparent, blendMode = BlendMode.Clear)
+                if (!animate) {
+                    drawPath(code, accent.copy(alpha = 0.6f), style = Stroke(2.dp.toPx(), join = StrokeJoin.Round))
+                    return@Canvas
+                }
+
+                // softly pulsing outline
+                val pulse = 0.5f + 0.5f * sin(time * 2f * PI.toFloat() / 1.8f)
+                drawPath(code, accent.copy(alpha = 0.16f + 0.14f * pulse), style = Stroke(16.dp.toPx(), join = StrokeJoin.Round))
+                drawPath(code, accent.copy(alpha = 0.55f + 0.4f * pulse), style = Stroke(2.5.dp.toPx(), join = StrokeJoin.Round))
+
+                // a band of light sweeping diagonally across the code
+                val b = code.getBounds()
+                val s = -0.4f + 1.8f * ((time / 2.4f) % 1f)
+                val c = Offset(b.left + b.width * s, b.top + b.height * s)
+                val d = Offset(b.width * 0.16f, b.height * 0.16f)
+                clipPath(code) {
+                    drawRect(
+                        Brush.linearGradient(
+                            listOf(Color.Transparent, Color.White.copy(alpha = 0.32f), gold.copy(alpha = 0.18f), Color.Transparent),
+                            start = c - d, end = c + d,
+                        ),
+                        topLeft = b.topLeft, size = b.size,
+                    )
+                }
+
+                // sparkles twinkling just outside the edges
+                val centre = Offset(q.sumOf { it.x.toDouble() }.toFloat() / 4, q.sumOf { it.y.toDouble() }.toFloat() / 4)
+                for (sp in sparkles) {
+                    val alpha = sin(2f * PI.toFloat() * (time * sp.speed + sp.phase)).coerceAtLeast(0f).let { it * it * it }
+                    if (alpha < 0.02f) continue
+                    val e = (sp.along * 4).toInt().coerceIn(0, 3); val t = sp.along * 4 - e
+                    val onEdge = q[e] + (q[(e + 1) % 4] - q[e]) * t
+                    val dir = (onEdge - centre).let { it / it.getDistance().coerceAtLeast(1f) }
+                    val at = onEdge + dir * sp.out.dp.toPx()
+                    val r = sp.size.dp.toPx() * (0.6f + 0.4f * alpha)
+                    val k = r * 0.22f
+                    val star = Path().apply {
+                        moveTo(at.x, at.y - r); lineTo(at.x + k, at.y - k); lineTo(at.x + r, at.y); lineTo(at.x + k, at.y + k)
+                        lineTo(at.x, at.y + r); lineTo(at.x - k, at.y + k); lineTo(at.x - r, at.y); lineTo(at.x - k, at.y - k); close()
+                    }
+                    drawPath(star, (if (sp.phase > 0.5f) gold else Color.White).copy(alpha = 0.85f * alpha))
+                }
             }
         }
     }
