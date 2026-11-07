@@ -132,6 +132,9 @@ dependencies {
 
     // Passkey / Credential Manager provider API
     implementation("androidx.credentials:credentials:1.3.0")
+    // Credential Exchange: import passkeys from another credential manager (beta)
+    implementation("androidx.credentials.providerevents:providerevents:1.0.0-beta01")
+    implementation("androidx.credentials.providerevents:providerevents-play-services:1.0.0-beta01")
 
     // CameraX + ML Kit barcode scanning (for the cross-device QR flow)
     implementation("androidx.camera:camera-core:1.4.1")

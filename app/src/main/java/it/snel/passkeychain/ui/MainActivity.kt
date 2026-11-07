@@ -101,6 +101,12 @@ import it.snel.passkeychain.R
 import it.snel.passkeychain.hybrid.HybridSignInActivity
 import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.io.Cxf
+import androidx.credentials.providerevents.ProviderEventsManager
+import androidx.credentials.providerevents.exception.ImportCredentialsCancellationException
+import androidx.credentials.providerevents.exception.ImportCredentialsException
+import androidx.credentials.providerevents.exception.ImportCredentialsNoExportOptionException
+import androidx.credentials.providerevents.transfer.CredentialTypes
+import androidx.credentials.providerevents.transfer.ImportCredentialsRequest
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
@@ -143,6 +149,28 @@ private sealed interface UpdateUi {
 
 /** An encrypted backup that is waiting for its password. */
 private data class PendingImport(val text: String, val error: String? = null)
+
+/**
+ * Asks Android for the passkeys of another credential manager on this phone
+ * (Credential Exchange: Android shows which apps offer a transfer, the user
+ * picks one and confirms there) and imports them. Returns the message to show,
+ * or null when the user cancelled.
+ */
+private suspend fun importFromAnotherApp(activity: FragmentActivity, store: PasskeyStore): String? = try {
+    val manager = ProviderEventsManager.create(activity)
+    val request = ImportCredentialsRequest(setOf(CredentialTypes.CREDENTIAL_TYPE_PUBLIC_KEY), emptySet())
+    val response = manager.importCredentials(activity, request)
+    val json = response.response.responseJson
+    withContext(Dispatchers.IO) { importJson(store, json) }
+} catch (e: ImportCredentialsCancellationException) {
+    null
+} catch (e: ImportCredentialsNoExportOptionException) {
+    "No app on this phone offers its passkeys for transfer yet."
+} catch (e: ImportCredentialsException) {
+    "Import failed: ${e.message ?: e.javaClass.simpleName}"
+} catch (e: IllegalArgumentException) {
+    "Import failed: ${e.message}"
+}
 
 /** Imports an unencrypted Bitwarden JSON export or a Credential Exchange (CXF) document; returns the message to show. */
 private fun importJson(store: PasskeyStore, text: String): String {
@@ -253,6 +281,18 @@ private fun MainScreen(store: PasskeyStore) {
                             text = { Text("Import from Bitwarden") },
                             leadingIcon = { Icon(AppIcons.FileDownload, null) },
                             onClick = { menuOpen = false; openImport() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Import from another app") },
+                            leadingIcon = { Icon(AppIcons.FileDownload, null) },
+                            onClick = {
+                                menuOpen = false
+                                scope.launch {
+                                    val msg = importFromAnotherApp(activity, store)
+                                    passkeys = withContext(Dispatchers.IO) { store.load() }
+                                    if (msg != null) snackbar.showSnackbar(msg)
+                                }
+                            },
                         )
                         DropdownMenuItem(
                             text = { Text("Export") },
