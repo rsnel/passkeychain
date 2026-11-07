@@ -370,11 +370,15 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             ws.send(okio.ByteString.of(*msg2))
 
             // Split
-            val (t, r) = noise.split()
-            txKey = t
-            rxKey = r
-            Log.d(TAG, "split txKey = ${hex(t)}")
-            Log.d(TAG, "split rxKey = ${hex(r)}")
+            // Chromium's traffic_keys() returns (read_key, write_key).
+            // read_key is what Chrome uses to send to us; write_key is what
+            // we use to send to Chrome. The first HKDF output is read_key,
+            // the second is write_key.
+            val (readKey, writeKey) = noise.split()
+            txKey = writeKey
+            rxKey = readKey
+            Log.d(TAG, "split readKey  = ${hex(readKey)}")
+            Log.d(TAG, "split writeKey = ${hex(writeKey)}")
 
             // Per Chromium's v2_authenticator.cc OnTunnelData: after the handshake
             // response (msg2), the authenticator sends a post-handshake message
