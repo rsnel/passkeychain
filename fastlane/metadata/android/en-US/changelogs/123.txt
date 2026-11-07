@@ -1,0 +1,6 @@
+First release.
+- Import passkeys from Bitwarden (also password protected) and Credential Exchange; export to Bitwarden
+- Sign in and create passkeys on a computer by scanning its QR code
+- Passkey provider on the phone (Android 14+)
+- Activity log
+- Choose the tunnel server, including your own

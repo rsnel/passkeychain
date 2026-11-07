@@ -1,0 +1,27 @@
+PassKeyChain keeps your FIDO2 passkeys on a phone you choose, under your control: no account, no cloud, no telemetry.
+
+<b>Bring your passkeys</b>
+<ul>
+<li>Import from a Bitwarden export, also a password-protected one</li>
+<li>Import from the FIDO Credential Exchange Format, as a file or straight from another app through Android's credential transfer</li>
+<li>Export again in Bitwarden's format, optionally password protected, as a backup or to move elsewhere</li>
+</ul>
+
+<b>Sign in</b>
+<ul>
+<li>On a computer: scan the QR code the browser shows, and the phone completes the sign-in over Bluetooth and an end-to-end encrypted tunnel (the open FIDO "hybrid" protocol)</li>
+<li>Create new passkeys the same way, from a website's "create a passkey" QR code</li>
+<li>On the phone itself: PassKeyChain registers as a passkey provider (Android 14 and newer)</li>
+<li>Nothing is signed until you approve with your fingerprint, face or PIN</li>
+</ul>
+
+<b>Your phone, your keys</b>
+<ul>
+<li>Passkeys are encrypted with a key that lives in the Android Keystore</li>
+<li>An encrypted activity log of every sign-in and every change</li>
+<li>Choose the tunnel server: Google's, or one you run yourself (a small server in plain Python is included in the source)</li>
+</ul>
+
+PassKeyChain is for the passkeys of your own accounts. There is no cloud copy: keep a password-protected export somewhere safe.
+
+The protocol notes, the server and the source code: https://github.com/rsnel/passkeychain

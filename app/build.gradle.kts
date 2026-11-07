@@ -21,7 +21,9 @@ val releaseStoreFile = signingValue("PASSKEYCHAIN_KEYSTORE_FILE", "storeFile")
 
 // CI builds get increasing version codes, so a newer APK installs over an older
 // one; the debug app's updater compares this number with the published build.
-val buildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+// the CI run number; builders without it (F-Droid) pass -PversionCode=<n>
+val buildNumber = (project.findProperty("versionCode") as String?)?.toIntOrNull()
+    ?: System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
 
 // The version name comes from the git tags: "1.0" for a build of tag v1.0,
 // "1.0-3-gabc1234" for the third commit after it (just the hash before the
