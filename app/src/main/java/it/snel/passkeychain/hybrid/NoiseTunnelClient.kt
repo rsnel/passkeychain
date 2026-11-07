@@ -300,11 +300,12 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
         override fun send(plaintext: ByteArray) {
             if (!handshakeDone) throw IllegalStateException("handshake not done")
-            // Every CTAP2 message over the tunnel is prefixed with a MessageType
-            // byte. 0x01 = kCTAP. See TunnelTransport::Write in v2_authenticator.cc.
-            val withType = byteArrayOf(0x00) + plaintext
-            val ct = encryptTransport(withType)
-            Log.d(TAG, "transport send ${ct.size} bytes (plaintext ${plaintext.size} + type byte): ${hex(ct)}")
+            // The plaintext already starts with the CTAP2 status byte
+            // (0x00 = CTAP2_OK). Chrome expects [status][CBOR] with no
+            // MessageType prefix on outgoing responses: adding one produced
+            // 'Trailing data bytes are not allowed' from Chrome's CTAP2 parser.
+            val ct = encryptTransport(plaintext)
+            Log.d(TAG, "transport send ${ct.size} bytes (plaintext ${plaintext.size}): ${hex(ct)}")
             ws.send(okio.ByteString.of(*ct))
         }
 

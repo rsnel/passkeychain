@@ -162,12 +162,27 @@ class HybridTransport(
         val rpId = (params[1L] ?: params[1]) as String
         val clientDataHash = (params[2L] ?: params[2]) as ByteArray
         require(rpId == passkey.rpId) { "rpId mismatch" }
+
+        // The response's credential descriptor must echo the credentialId
+        // Chrome asked for in its allow list, not the passkey's stored id.
+        // Chrome treats a response for a different credential as invalid.
+        @Suppress("UNCHECKED_CAST")
+        val allow = (params[3L] ?: params[3]) as? List<Map<Any?, Any?>>
+        @Suppress("UNCHECKED_CAST")
+        val requestedCredId = allow?.firstOrNull()?.get("id") as? ByteArray
+        val credIdBytes = requestedCredId ?: b64urlToBytes(passkey.credentialId)
+        android.util.Log.d("HybridTransport", "buildGetAssertion: requestedCredId=" +
+            (requestedCredId?.let { hexOf(it) } ?: "null") +
+            " passkeyCredId=" + passkey.credentialId)
+
         val r = Assertion.create(passkey = passkey, challengeB64Url = "", origin = "", clientDataHash = clientDataHash)
-        val credential = linkedMapOf<Any, Any>("id" to b64urlToBytes(passkey.credentialId), "type" to "public-key")
-        val user = linkedMapOf<Any, Any>("id" to b64urlToBytes(passkey.userHandle))
-        val resp = linkedMapOf<Any, Any>(1 to credential, 2 to r.authenticatorData, 3 to r.signature, 4 to user)
+        val credential = linkedMapOf<Any, Any>("id" to credIdBytes, "type" to "public-key")
+        // No key 4 (user) for a non-discoverable getAssertion, matching Chromium's CTAP2Processor.
+        val resp = linkedMapOf<Any, Any>(1 to credential, 2 to r.authenticatorData, 3 to r.signature)
         return byteArrayOf(0x00) + Cbor.encode(resp)
     }
+
+    private fun hexOf(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
 
     private fun b64urlToBytes(s: String): ByteArray = it.snel.passkeychain.util.B64.dUrl(s)
 
