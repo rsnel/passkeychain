@@ -70,11 +70,19 @@ jobs:
       # the unit tests (which re-verify the crypto core) run against debug
       - name: Unit tests and APK
         run: |
-          if [ "$IS_RELEASE" = true ]; then
-            ./gradlew --no-daemon testDebugUnitTest assembleRelease
-          else
-            ./gradlew --no-daemon testDebugUnitTest assembleDebug
-          fi
+          set -o pipefail
+          task=assembleDebug
+          if [ "$IS_RELEASE" = true ]; then task=assembleRelease; fi
+          ./gradlew --no-daemon testDebugUnitTest "$task" 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+
+      # The first compiler, test and Gradle errors as one annotation: visible
+      # in the run summary (and the API) without reading the whole log.
+      - name: Show build errors
+        if: failure()
+        run: |
+          msg=$(grep -E '^e: |^> |What went wrong|FAILED|error:|Exception' "$RUNNER_TEMP/gradle.log" \
+            | grep -v '^> Task .* UP-TO-DATE' | head -40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Build errors::${msg:-no error lines found, see the log}"
 
       - name: Show signing certificates
         run: |

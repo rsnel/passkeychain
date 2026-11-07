@@ -100,6 +100,7 @@ import androidx.compose.ui.unit.dp
 import it.snel.passkeychain.R
 import it.snel.passkeychain.hybrid.HybridSignInActivity
 import it.snel.passkeychain.io.Bitwarden
+import it.snel.passkeychain.io.Cxf
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
@@ -143,9 +144,9 @@ private sealed interface UpdateUi {
 /** An encrypted backup that is waiting for its password. */
 private data class PendingImport(val text: String, val error: String? = null)
 
-/** Imports an unencrypted Bitwarden JSON export; returns the message to show. */
+/** Imports an unencrypted Bitwarden JSON export or a Credential Exchange (CXF) document; returns the message to show. */
 private fun importJson(store: PasskeyStore, text: String): String {
-    val res = Bitwarden.parse(text)
+    val res = if (Cxf.hasPasskeys(text)) Cxf.parse(text) else Bitwarden.parse(text)
     res.imported.forEach { store.upsert(it) }
     val n = res.imported.size
     return (if (n == 1) "Imported 1 passkey" else "Imported $n passkeys") +
