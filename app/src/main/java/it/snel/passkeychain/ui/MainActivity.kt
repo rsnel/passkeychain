@@ -87,7 +87,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import it.snel.passkeychain.R
-import it.snel.passkeychain.camera.QrScanActivity
+import it.snel.passkeychain.hybrid.HybridSignInActivity
 import it.snel.passkeychain.io.Bitwarden
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Checkbox
@@ -201,8 +201,6 @@ private fun MainScreen(store: PasskeyStore) {
             snackbar.showSnackbar(msg)
         }
     }
-    // the scanner hands a sign-in QR straight to HybridSignInActivity
-    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
     val openImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -280,7 +278,7 @@ private fun MainScreen(store: PasskeyStore) {
                 text = { Text("Scan sign-in QR") },
                 icon = { Icon(AppIcons.QrCodeScanner, null) },
                 expanded = fabExpanded,
-                onClick = { scanLauncher.launch(Intent(ctx, QrScanActivity::class.java)) },
+                onClick = { ctx.startActivity(Intent(ctx, HybridSignInActivity::class.java)) },
             )
         },
     ) { padding ->

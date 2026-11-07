@@ -13,7 +13,18 @@ import javax.crypto.spec.SecretKeySpec
 class HybridTransport(
     private val ble: BleAdvertiser,
     private val tunnel: TunnelClient,
+    /** Reports how far the exchange is, for the progress list on screen. */
+    private val progress: (Progress) -> Unit = {},
 ) {
+    sealed interface Progress {
+        /** connecting to the tunnel server [host] */
+        data class TunnelOpening(val host: String) : Progress
+        /** the tunnel is open; the Bluetooth broadcast starts now */
+        data object TunnelOpen : Progress
+        /** broadcasting; now waiting for the browser to connect and start the Noise handshake */
+        data object Broadcasting : Progress
+    }
+
     class DeviceStageMissing(stage: String) :
         UnsupportedOperationException("hybrid stage '$stage' needs on-device BLE/network and is not wired in this build")
 
@@ -122,7 +133,9 @@ class HybridTransport(
         val staticPrivPkcs8 = p256PrivateKeyFromScalar(staticPrivSeed)
         it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_RESPONDER_PRIV = staticPrivPkcs8
 
+        progress(Progress.TunnelOpening(java.net.URI(newTunnelUrl).host))
         val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
+        progress(Progress.TunnelOpen)
         val routingId = newTunnel.routingId
 
         // 2. Build the 16-byte EID plaintext. Its bytes are the HKDF salt for the PSK.
@@ -137,6 +150,7 @@ class HybridTransport(
         // 4. Encrypt the EID and advertise it.
         val eid = encryptEid(aesKey, hmacKey, eidPlaintext)
         ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), eid)
+        progress(Progress.Broadcasting)
 
         try {
             // 3. Wait for the Noise handshake + CTAP2 request on the already-open WebSocket.

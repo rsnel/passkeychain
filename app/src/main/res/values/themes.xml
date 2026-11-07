@@ -5,7 +5,4 @@
     <style name="Theme.PassKeyChain" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/pkc_window_bg</item>
     </style>
-    <style name="Theme.PassKeyChain.Scan" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
-    </style>
 </resources>

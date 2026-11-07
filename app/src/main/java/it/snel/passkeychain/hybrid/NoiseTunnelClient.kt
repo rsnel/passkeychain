@@ -39,7 +39,8 @@ import it.snel.passkeychain.webauthn.Cbor
  *
  * Everything is logged: h, ck, k, nonce counter, and raw message bytes.
  */
-class NoiseTunnelClient : HybridTransport.TunnelClient {
+/** [onHandshakeDone] is called once the Noise handshake with the browser has completed (for progress display). */
+class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTransport.TunnelClient {
 
     private val TAG = "NoiseTunnelClient"
     private val PROTOCOL_NAME = "Noise_KNpsk0_P256_AESGCM_SHA256"
@@ -246,6 +247,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                 Dbg.d(TAG, "receive(): handshake not done, running handshake")
                 handshake()
                 handshakeDone = true
+                onHandshakeDone()
             }
             while (true) {
                 Dbg.d(TAG, "receive(): waiting up to 120s for transport ciphertext from Chrome")

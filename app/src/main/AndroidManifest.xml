@@ -5,14 +5,13 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
-    <!-- For the cross-device (hybrid/caBLE) proximity advertisement. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
 
     <uses-feature android:name="android.hardware.camera.any" android:required="true"/>
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>
 
-    <!-- Bluetooth Permissions for Android 12+ (API 31+) -->
+    <!-- Bluetooth for the cross-device sign-in broadcast. Android 12+ (API 31+):
+         runtime permissions ("Nearby devices"), requested by HybridSignInActivity;
+         ADVERTISE to broadcast, CONNECT to ask the user to switch Bluetooth on. -->
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Bluetooth Permissions for Android 11 and below -->
@@ -43,12 +42,6 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".camera.QrScanActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:theme="@style/Theme.PassKeyChain.Scan"/>
 
         <!-- Launched only via the provider's own PendingIntent; not exported. -->
         <activity
