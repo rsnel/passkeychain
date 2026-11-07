@@ -100,7 +100,7 @@ class HybridTransport(
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
         val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
         val tunnelId = hkdf(qr.qrSecret, ByteArray(0), label(2), 16)
-        val peer65 = NoiseTunnelClient.decompressPeerIdentity(qr.peerPublicKey)
+        val peer65 = NoiseHandshake.decompress(qr.peerPublicKey)
 
         // 1. Open /cable/new/ first: the routing ID for the advert comes from its response headers.
         val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
