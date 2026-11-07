@@ -121,6 +121,11 @@ import java.util.concurrent.TimeoutException
  * arrives, the passkeys that fit it are offered (a choice when there is more
  * than one), the screen lock is asked, and only then does the worker sign.
  */
+/** The colours of the stamps, also used for the step list: done, in progress, failed. */
+private val StampGreen = Color(0xFF1E9E5A)
+private val StampYellow = Color(0xFFF2B705)
+private val StampRed = Color(0xFFC62828)
+
 class HybridSignInActivity : FragmentActivity() {
     private val TAG = "HybridSignInActivity"
 
@@ -505,12 +510,14 @@ class HybridSignInActivity : FragmentActivity() {
             Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
                 when (state) {
                     State.Pending -> Box(Modifier.size(22.dp).border(2.dp, scheme.outlineVariant, CircleShape))
-                    State.Active -> CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 3.dp)
-                    State.Done -> Box(Modifier.size(24.dp).clip(CircleShape).background(scheme.primary), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = scheme.onPrimary)
+                    State.Active -> CircularProgressIndicator(
+                        Modifier.size(22.dp), color = StampYellow, trackColor = StampYellow.copy(alpha = 0.25f), strokeWidth = 3.dp,
+                    )
+                    State.Done -> Box(Modifier.size(24.dp).clip(CircleShape).background(StampGreen), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color.White)
                     }
-                    is State.Failed -> Box(Modifier.size(24.dp).clip(CircleShape).background(scheme.error), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Close, null, Modifier.size(16.dp), tint = scheme.onError)
+                    is State.Failed -> Box(Modifier.size(24.dp).clip(CircleShape).background(StampRed), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Close, null, Modifier.size(16.dp), tint = Color.White)
                     }
                 }
             }
@@ -529,7 +536,7 @@ class HybridSignInActivity : FragmentActivity() {
                 if (text != null) Text(
                     text,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (state is State.Failed) scheme.error else scheme.onSurfaceVariant,
+                    color = if (state is State.Failed) StampRed else scheme.onSurfaceVariant,
                 )
             }
         }
@@ -565,10 +572,10 @@ class HybridSignInActivity : FragmentActivity() {
             land.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
         }
         val accent = MaterialTheme.colorScheme.primaryContainer
-        val yellow = Color(0xFFF2B705)
+        val yellow = StampYellow
         val gold = Color(0xFFFFD35C)
-        val green = Color(0xFF1E9E5A)
-        val red = Color(0xFFC62828)
+        val green = StampGreen
+        val red = StampRed
         val textMeasurer = rememberTextMeasurer()
         fun measure(word: String, colour: Color) = textMeasurer.measure(
             AnnotatedString(word),

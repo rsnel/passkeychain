@@ -3,6 +3,7 @@ package it.snel.passkeychain.update
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import it.snel.passkeychain.BuildConfig
 import kotlinx.coroutines.Dispatchers
@@ -142,44 +143,64 @@ class UpdateChecker(private val context: Context) {
         return Release(tag, tag.removePrefix("v"), "$REPO/releases/download/$tag/passkeychain-$tag.apk")
     }
 
-    /** Downloads the APK to the cache and launches the system package installer. */
-    suspend fun downloadAndInstall(release: Release, onProgress: (Int) -> Unit = {}) {
-        val apk = withContext(Dispatchers.IO) {
-            val dir = File(context.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
-            val out = File(dir, "passkeychain-${release.tag}.apk")
-            val conn = open(release.apkUrl)
-            try {
-                if (conn.responseCode !in 200..299) throw IOException("Download failed (HTTP ${conn.responseCode})")
-                val total = conn.contentLengthLong
-                conn.inputStream.use { ins ->
-                    out.outputStream().use { os ->
-                        val buf = ByteArray(64 * 1024)
-                        var done = 0L
-                        while (true) {
-                            val n = ins.read(buf)
-                            if (n < 0) break
-                            os.write(buf, 0, n)
-                            done += n
-                            if (total > 0) onProgress((done * 100 / total).toInt())
-                        }
+    /** Whether Android lets this app start the package installer ("Install unknown apps"). */
+    fun canInstall(): Boolean = context.packageManager.canRequestPackageInstalls()
+
+    /** The settings screen where the user allows this app to install updates. */
+    fun installPermissionIntent(): Intent =
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+
+    /**
+     * Downloads the APK of [release] to the cache and checks it: complete,
+     * this app, and newer than the installed version. Does not install.
+     */
+    suspend fun download(release: Release, onProgress: (Int) -> Unit = {}): File = withContext(Dispatchers.IO) {
+        val dir = File(context.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
+        val out = File(dir, "passkeychain-${release.tag}.apk")
+        val conn = open(release.apkUrl)
+        try {
+            if (conn.responseCode !in 200..299) throw IOException("Download failed (HTTP ${conn.responseCode})")
+            val total = conn.contentLengthLong
+            var done = 0L
+            conn.inputStream.use { ins ->
+                out.outputStream().use { os ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        os.write(buf, 0, n)
+                        done += n
+                        if (total > 0) onProgress((done * 100 / total).toInt())
                     }
                 }
-            } finally {
-                conn.disconnect()
             }
-            // Android refuses another signature or package itself; this only
-            // catches a broken or wrong file early
-            val pi = context.packageManager.getPackageArchiveInfo(out.path, 0)
-            if (pi == null || pi.packageName != context.packageName) {
+            if (total > 0 && done != total) throw IOException("The download was incomplete. Try again.")
+        } finally {
+            conn.disconnect()
+        }
+        // Android refuses another signature or package itself; this catches a
+        // broken, wrong or stale file early, with a clear message
+        val pi = context.packageManager.getPackageArchiveInfo(out.path, 0)
+        when {
+            pi == null || pi.packageName != context.packageName -> {
                 out.delete()
                 throw IOException("The downloaded file is not a PassKeyChain app")
             }
-            out
+            pi.longVersionCode <= currentBuild -> {
+                out.delete()
+                throw IOException("The downloaded file is not newer than this version. Try again in a minute.")
+            }
         }
+        out
+    }
+
+    /** Opens the system package installer for [apk]. Call it while the app is in the foreground. */
+    fun install(apk: File) {
         val uri: Uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", apk)
         context.startActivity(Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         })
     }
 

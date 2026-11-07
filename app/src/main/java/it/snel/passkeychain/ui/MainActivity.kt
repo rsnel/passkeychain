@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.withResumed
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -123,6 +124,10 @@ private sealed interface UpdateUi {
     data object Checking : UpdateUi
     data class Result(val status: UpdateChecker.Status) : UpdateUi
     data class Downloading(val release: UpdateChecker.Release, val percent: Int) : UpdateUi
+    /** Android must first allow this app to install apps ("Install unknown apps"). */
+    data class NeedsPermission(val release: UpdateChecker.Release) : UpdateUi
+    /** Downloaded and checked; the installer opens as soon as the app is in the foreground. */
+    data class Ready(val release: UpdateChecker.Release, val apk: java.io.File) : UpdateUi
 }
 
 /** An encrypted backup that is waiting for its password. */
@@ -305,16 +310,48 @@ private fun MainScreen(store: PasskeyStore) {
         )
     }
 
+    fun startDownload(rel: UpdateChecker.Release) {
+        update = UpdateUi.Downloading(rel, 0)
+        scope.launch {
+            runCatching { updater.download(rel) { p -> scope.launch { if (update is UpdateUi.Downloading) update = UpdateUi.Downloading(rel, p) } } }
+                .onSuccess { apk -> update = UpdateUi.Ready(rel, apk) }
+                .onFailure {
+                    update = null
+                    snackbar.showSnackbar("Update failed: ${it.message}")
+                }
+        }
+    }
+    val installPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val u = update as? UpdateUi.NeedsPermission ?: return@rememberLauncherForActivityResult
+        if (updater.canInstall()) startDownload(u.release)
+        else {
+            update = null
+            scope.launch { snackbar.showSnackbar("Not updated: PassKeyChain may not install apps (\"Install unknown apps\").") }
+        }
+    }
+    // Open the installer once the download is ready, but only while the app is in
+    // the foreground: Android silently ignores an installer started from the
+    // background (for instance when the user switched apps during the download).
+    (update as? UpdateUi.Ready)?.let { ready ->
+        LaunchedEffect(ready) {
+            activity.lifecycle.withResumed {
+                runCatching { updater.install(ready.apk) }
+                    .onFailure { scope.launch { snackbar.showSnackbar("Could not open the installer: ${it.message}") } }
+            }
+        }
+    }
+
     update?.let { u ->
         UpdateDialog(
             u, current = updater.currentLabel,
             onDismiss = { if (u !is UpdateUi.Downloading) update = null },
             onInstall = { rel ->
-                update = UpdateUi.Downloading(rel, 0)
-                scope.launch {
-                    runCatching { updater.downloadAndInstall(rel) { p -> update = UpdateUi.Downloading(rel, p) } }
-                        .onFailure { snackbar.showSnackbar("Update failed: ${it.message}") }
-                    update = null
+                when {
+                    u is UpdateUi.Ready -> runCatching { updater.install(u.apk) }
+                        .onFailure { scope.launch { snackbar.showSnackbar("Could not open the installer: ${it.message}") } }
+                    updater.canInstall() -> startDownload(rel)
+                    u is UpdateUi.NeedsPermission -> installPermission.launch(updater.installPermissionIntent())
+                    else -> update = UpdateUi.NeedsPermission(rel)
                 }
             },
         )
@@ -596,6 +633,8 @@ private fun UpdateDialog(u: UpdateUi, current: String, onDismiss: () -> Unit, on
                 when (u) {
                     UpdateUi.Checking -> "Checking for updates"
                     is UpdateUi.Downloading -> "Downloading update"
+                    is UpdateUi.NeedsPermission -> "Allow updates"
+                    is UpdateUi.Ready -> "Ready to install"
                     is UpdateUi.Result -> when (u.status) {
                         is UpdateChecker.Status.UpToDate -> "You're up to date"
                         is UpdateChecker.Status.Building -> "Update on its way"
@@ -608,6 +647,13 @@ private fun UpdateDialog(u: UpdateUi, current: String, onDismiss: () -> Unit, on
         text = {
             when (u) {
                 UpdateUi.Checking -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                is UpdateUi.NeedsPermission -> Text(
+                    "To install ${u.release.label}, Android needs your permission once: switch on " +
+                        "\"Allow from this source\" for PassKeyChain, then come back here.",
+                )
+                is UpdateUi.Ready -> Text(
+                    "${u.release.label} has been downloaded. If the installer did not open, tap Install.",
+                )
                 is UpdateUi.Downloading -> Column {
                     Text(u.release.label)
                     Spacer(Modifier.height(16.dp))
@@ -627,14 +673,20 @@ private fun UpdateDialog(u: UpdateUi, current: String, onDismiss: () -> Unit, on
         confirmButton = {
             val s = (u as? UpdateUi.Result)?.status
             when {
+                u is UpdateUi.NeedsPermission -> TextButton(onClick = { onInstall(u.release) }) { Text("Open settings") }
+                u is UpdateUi.Ready -> TextButton(onClick = { onInstall(u.release) }) { Text("Install") }
                 s is UpdateChecker.Status.Available -> TextButton(onClick = { onInstall(s.release) }) { Text("Install") }
                 u is UpdateUi.Result -> TextButton(onClick = onDismiss) { Text("OK") }
                 else -> {}
             }
         },
         dismissButton = {
-            if ((u as? UpdateUi.Result)?.status is UpdateChecker.Status.Available || u is UpdateUi.Checking) {
+            if ((u as? UpdateUi.Result)?.status is UpdateChecker.Status.Available || u is UpdateUi.Checking ||
+                u is UpdateUi.NeedsPermission
+            ) {
                 TextButton(onClick = onDismiss) { Text("Cancel") }
+            } else if (u is UpdateUi.Ready) {
+                TextButton(onClick = onDismiss) { Text("Later") }
             }
         },
     )
