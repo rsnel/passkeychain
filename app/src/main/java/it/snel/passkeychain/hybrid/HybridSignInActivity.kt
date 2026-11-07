@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -571,6 +572,14 @@ class HybridSignInActivity : FragmentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun Screen() {
+        // keep the screen on while the camera looks for the code and while the
+        // sign-in runs: if the phone locks, the approval prompt never gets answered
+        // and the computer gives up. After a failure the screen may sleep again.
+        val busy = !failed && states[Step.Send.ordinal] != State.Done
+        LaunchedEffect(busy) {
+            if (busy) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
             // upper half: the camera, or what came of the scan
             Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().background(Color.Black)) {
