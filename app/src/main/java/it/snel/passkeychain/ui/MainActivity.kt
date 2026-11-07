@@ -30,23 +30,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Event
-import androidx.compose.material.icons.rounded.FileDownload
-import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.QrCode2
-import androidx.compose.material.icons.rounded.QrCodeScanner
-import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.Tag
-import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -218,19 +206,19 @@ private fun MainScreen(store: PasskeyStore) {
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text("Import from Bitwarden") },
-                            leadingIcon = { Icon(Icons.Rounded.FileDownload, null) },
+                            leadingIcon = { Icon(AppIcons.FileDownload, null) },
                             onClick = { menuOpen = false; openImport() },
                         )
                         DropdownMenuItem(
                             text = { Text("Export") },
-                            leadingIcon = { Icon(Icons.Rounded.FileUpload, null) },
+                            leadingIcon = { Icon(AppIcons.FileUpload, null) },
                             enabled = passkeys.isNotEmpty(),
                             onClick = { menuOpen = false; exportLauncher.launch("passkeychain-bitwarden.json") },
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Check for updates") },
-                            leadingIcon = { Icon(Icons.Rounded.SystemUpdate, null) },
+                            leadingIcon = { Icon(AppIcons.SystemUpdate, null) },
                             onClick = {
                                 menuOpen = false
                                 update = UpdateUi.Checking
@@ -249,7 +237,7 @@ private fun MainScreen(store: PasskeyStore) {
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 text = { Text("Scan sign-in QR") },
-                icon = { Icon(Icons.Rounded.QrCodeScanner, null) },
+                icon = { Icon(AppIcons.QrCodeScanner, null) },
                 expanded = fabExpanded,
                 onClick = { scanLauncher.launch(Intent(ctx, QrScanActivity::class.java)) },
             )
@@ -296,7 +284,7 @@ private fun MainScreen(store: PasskeyStore) {
     scan?.let { s ->
         AlertDialog(
             onDismissRequest = { scan = null },
-            icon = { Icon(Icons.Rounded.QrCode2, null) },
+            icon = { Icon(AppIcons.QrCode2, null) },
             title = { Text(s.title) },
             text = { Text(s.text) },
             confirmButton = { TextButton(onClick = { scan = null }) { Text("OK") } },
@@ -369,7 +357,7 @@ private fun SummaryCard(count: Int) {
             Box(
                 Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
                 contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Rounded.Shield, null, tint = MaterialTheme.colorScheme.onPrimary) }
+            ) { Icon(AppIcons.Shield, null, tint = MaterialTheme.colorScheme.onPrimary) }
             Spacer(Modifier.width(16.dp))
             Column {
                 Text(
@@ -399,7 +387,7 @@ private fun PasskeyItem(pk: Passkey, shape: RoundedCornerShape, onClick: () -> U
                 val sub = pk.userDisplayName.takeIf { it.isNotBlank() && it != pk.label } ?: pk.rpId
                 Text(sub, maxLines = 1, overflow = TextOverflow.Ellipsis)
             },
-            trailingContent = { Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+            trailingContent = { Icon(AppIcons.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
         )
     }
 }
@@ -438,7 +426,7 @@ private fun EmptyState(modifier: Modifier, onImport: () -> Unit) {
         )
         Spacer(Modifier.height(28.dp))
         FilledTonalButton(onClick = onImport, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp)) {
-            Icon(Icons.Rounded.FileDownload, null, Modifier.size(ButtonDefaults.IconSize))
+            Icon(AppIcons.FileDownload, null, Modifier.size(ButtonDefaults.IconSize))
             Spacer(Modifier.width(ButtonDefaults.IconSpacing))
             Text("Import passkeys")
         }
@@ -477,17 +465,17 @@ private fun PasskeySheet(pk: Passkey, onDismiss: () -> Unit, onCopied: () -> Uni
             }
             Spacer(Modifier.height(16.dp))
             if (pk.userDisplayName.isNotBlank()) DetailRow(Icons.Rounded.Person, "Name", pk.userDisplayName)
-            DetailRow(Icons.Rounded.Language, "Website", pk.rpId)
+            DetailRow(AppIcons.Language, "Website", pk.rpId)
             DetailRow(
-                Icons.Rounded.Key, "Credential ID", shortId(pk.credentialId), mono = true,
+                AppIcons.Key, "Credential ID", shortId(pk.credentialId), mono = true,
                 trailing = {
                     IconButton(onClick = { clipboard.setText(AnnotatedString(pk.credentialId)); onCopied() }) {
-                        Icon(Icons.Rounded.ContentCopy, "Copy credential ID")
+                        Icon(AppIcons.ContentCopy, "Copy credential ID")
                     }
                 },
             )
-            if (pk.creationDate.isNotBlank()) DetailRow(Icons.Rounded.Event, "Created", pk.creationDate.take(10))
-            DetailRow(Icons.Rounded.Tag, "Signature counter", pk.counter.toString())
+            if (pk.creationDate.isNotBlank()) DetailRow(AppIcons.Event, "Created", pk.creationDate.take(10))
+            DetailRow(AppIcons.Tag, "Signature counter", pk.counter.toString())
             DetailRow(Icons.Rounded.Lock, "Key", "${pk.keyAlgorithm} ${pk.keyCurve}, encrypted on this phone")
             Spacer(Modifier.height(16.dp))
             OutlinedButton(
@@ -531,7 +519,7 @@ private fun shortId(id: String): String = if (id.length <= 20) id else id.take(1
 private fun UpdateDialog(u: UpdateUi, current: String, onDismiss: () -> Unit, onInstall: (UpdateChecker.Release) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.SystemUpdate, null) },
+        icon = { Icon(AppIcons.SystemUpdate, null) },
         title = {
             Text(
                 when (u) {

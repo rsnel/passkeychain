@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +52,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import it.snel.passkeychain.hybrid.FidoQr
+import it.snel.passkeychain.ui.AppIcons
 import it.snel.passkeychain.ui.theme.PassKeyChainTheme
 import java.util.concurrent.Executors
 
@@ -171,7 +171,7 @@ private fun ScanScreen(previewView: PreviewView, onClose: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.QrCodeScanner, null, tint = MaterialTheme.colorScheme.primary)
+                    Icon(AppIcons.QrCodeScanner, null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(16.dp))
                     Column {
                         Text("Scan the sign-in QR", style = MaterialTheme.typography.titleMedium)
