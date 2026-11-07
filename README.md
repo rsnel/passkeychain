@@ -1,6 +1,7 @@
 # PassKeyChain
 
-An open-source Android app that **imports your FIDO2 passkeys**, stores the
+**Passkey sovereignty:** your passkeys, on a phone you choose, under your
+control. An open-source Android app that **imports your FIDO2 passkeys**, stores the
 private keys in Android Keystore-encrypted storage, uses them to sign in — on a
 computer by scanning its sign-in QR code (the FIDO hybrid transport: Bluetooth
 plus an encrypted tunnel), and on the phone itself as a system passkey

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PassKeyChain — import, store &amp; use your passkeys on Android</title>
-<meta name="description" content="An open-source Android app that imports FIDO2 passkeys from a Bitwarden export, keeps them in Android Keystore-encrypted storage, and signs you in with them: on a computer by scanning its sign-in QR code, and on the phone itself as a passkey provider.">
+<title>PassKeyChain — passkey sovereignty on Android</title>
+<meta name="description" content="Your passkeys, on a phone you choose, under your control. PassKeyChain is an open-source Android app that holds passkeys you own, signs you in with them on your computer (by QR code) and on the phone itself, and lets you take them with you in open formats. No account, no cloud, no telemetry.">
 <meta name="theme-color" content="#4F46E5">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon.png" type="image/png">
@@ -51,6 +51,13 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px}
   .card h3{margin:14px 0 6px;font-size:18px}
   .card p{margin:0;color:var(--muted);font-size:15px}
+  .eyebrow{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);margin:0 0 14px}
+  .principles{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+  .principles .card{padding:24px 26px}
+  .principles .card h3{font-size:20px}
+  .principles .card p{font-size:16px}
+  .twin{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:22px}
+  @media (max-width:860px){ .principles,.twin{grid-template-columns:1fr} }
   .ic{width:42px;height:42px;border-radius:12px;background:linear-gradient(180deg,#eef0ff,#e5e8ff);display:flex;align-items:center;justify-content:center}
   @media (prefers-color-scheme: dark){ .ic{background:#241f3d} }
 
@@ -112,8 +119,9 @@
 <header class="hero">
   <div class="wrap hero-grid">
     <div>
-      <h1>Your passkeys.<br>Your device.<br>Your keys.</h1>
-      <p class="lede">PassKeyChain imports FIDO2 passkeys from a Bitwarden export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and signs you in with them: on your computer by scanning its sign-in QR code, and on your phone as a passkey provider.</p>
+      <p class="eyebrow">Passkey sovereignty</p>
+      <h1>Your passkeys.<br>Your phone.<br>Your call.</h1>
+      <p class="lede">A passkey is a key, and a key should belong to the person who uses it. PassKeyChain keeps your passkeys on a phone <em>you</em> choose, under <em>your</em> control: sign in with them on your computer or on the phone itself, and take them with you whenever you want.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/rsnel/passkeychain/releases/download/debug/passkeychain-debug.apk">⬇ Download debug APK</a>
         <a class="btn btn-ghost" href="https://github.com/rsnel/passkeychain">View source on GitHub</a>
@@ -121,10 +129,10 @@
       <div class="pills">
         <span class="pill">GPLv3</span>
         <span class="pill">Android 9+ (API 28)</span>
+        <span class="pill">No account, no cloud</span>
         <span class="pill">Keystore-encrypted</span>
         <span class="pill">Sign in on your computer</span>
-        <span class="pill">Import &amp; export</span>
-        <span class="pill">Self-updating</span>
+        <span class="pill">Open import &amp; export</span>
       </div>
     </div>
     <div class="hero-media">
@@ -133,43 +141,76 @@
   </div>
 </header>
 
+<section id="sovereignty">
+  <div class="wrap">
+    <h2>What passkey sovereignty means</h2>
+    <p class="sub">Passkeys are a big step up from passwords. But in practice they tend to live inside somebody’s account: your phone maker’s, your browser’s, your password manager’s. You may use them, on their terms, on their devices. PassKeyChain starts from the other end: a passkey is yours, just like a passphrase you know by heart.</p>
+    <div class="principles">
+      <div class="card">
+        <div class="ic">🔑</div>
+        <h3>The key is yours</h3>
+        <p>You hold the private key itself, not a pointer to it in someone else’s cloud. You can see which sites and accounts your passkeys belong to, and you can export them again at any moment.</p>
+      </div>
+      <div class="card">
+        <div class="ic">📱</div>
+        <h3>You choose the device</h3>
+        <p>Any passkey you own can sign you in on any computer with Bluetooth and a current browser, from this phone, through the open QR sign-in standard those browsers speak. Phone, browser and passkey don’t have to come from the same company.</p>
+      </div>
+      <div class="card">
+        <div class="ic">🚪</div>
+        <h3>You can always leave</h3>
+        <p>Import and export use open formats: Bitwarden’s, and the FIDO Credential Exchange Format. The app is free software under the GPLv3. Nothing here is built to keep you in, PassKeyChain included.</p>
+      </div>
+      <div class="card">
+        <div class="ic">✋</div>
+        <h3>Nothing happens without you</h3>
+        <p>No account, no server of ours, no telemetry. Every signature, and every new passkey, needs your unlock on your phone, for a site you can see. A sign-in history shows what signed in where.</p>
+      </div>
+    </div>
+    <div class="twin">
+      <p class="note">⚖️ <strong>Sovereignty comes with responsibility.</strong> There is no cloud copy to fall back on: lose the phone, and the passkeys on it are gone unless you kept a backup. Keep a password-protected export somewhere safe. An unencrypted export holds every private key, so treat it like the keys to your house.</p>
+      <p class="note">🌐 <strong>What you don’t control.</strong> Signing in on a computer needs a relay on the internet to bring phone and computer together; for Android phones it is run by Google. It only passes along end-to-end encrypted data: it cannot read the request, and it cannot sign anything. The Bluetooth step makes sure your phone is really next to the computer.</p>
+    </div>
+  </div>
+</section>
+
 <section>
   <div class="wrap">
     <h2>What it does</h2>
-    <p class="sub">A self-hosted passkey manager — you hold the keys, not a cloud vendor.</p>
+    <p class="sub">Everything you need to hold your own passkeys and use them where you want.</p>
     <div class="features">
       <div class="card">
         <div class="ic">🔑</div>
-        <h3>Import passkeys</h3>
-        <p>Reads the passkeys from a Bitwarden JSON export (<code>fido2Credentials</code>), including password-protected encrypted exports, and from the FIDO Credential Exchange Format, also straight from another app through Android’s credential transfer.</p>
+        <h3>Bring your passkeys</h3>
+        <p>Imports the passkeys from a Bitwarden export, also a password-protected one, and from the FIDO Credential Exchange Format: as a file, or straight from another app through Android’s credential transfer.</p>
       </div>
       <div class="card">
         <div class="ic">🛡️</div>
-        <h3>Encrypted at rest</h3>
-        <p>Credentials are sealed with an AES-256-GCM key held in the Android Keystore — hardware-backed / StrongBox where the device supports it.</p>
+        <h3>Locked to your phone</h3>
+        <p>Your passkeys are sealed with an AES-256-GCM key that lives in the Android Keystore, in hardware where the phone has it. That sealing key never leaves the Keystore, so the stored file is useless anywhere else; your passkeys leave the phone only in an export you make.</p>
       </div>
       <div class="card">
         <div class="ic">📲</div>
-        <h3>On-device sign-in</h3>
-        <p>Registers as a system <strong>passkey provider</strong> (Android 14+), so imported keys are offered when you log in to sites and apps on the phone.</p>
+        <h3>Sign in on the phone</h3>
+        <p>Registers as a system <strong>passkey provider</strong> (Android 14+), so your passkeys are offered when you log in to sites and apps on the phone itself.</p>
       </div>
       <div class="card">
         <div class="ic">🔗</div>
         <h3>Sign in on your computer</h3>
-        <p>Scan the QR code a computer shows when it asks for a passkey, and PassKeyChain completes the sign-in over Bluetooth and an encrypted tunnel. Tested with a real Microsoft sign-in. A site’s “create a passkey” code makes a new passkey on the phone. <a href="#qr-signin">How QR sign-in works →</a></p>
+        <p>Scan the QR code a computer shows when it asks for a passkey, and your phone completes the sign-in over Bluetooth and an encrypted tunnel. Tested with a real Microsoft sign-in. A site’s “create a passkey” code makes a new passkey that is yours from the start. <a href="#qr-signin">How QR sign-in works →</a></p>
       </div>
       <div class="card">
         <div class="ic">📤</div>
-        <h3>Export anytime</h3>
-        <p>Exports in Bitwarden’s format, encrypted with a password if you like, so you can import them back into Bitwarden. No lock-in — your credentials move with you.</p>
+        <h3>Take them with you</h3>
+        <p>Exports in Bitwarden’s format, protected with a password if you like, so another manager can take over at any time. Your passkeys move with you, not with an account.</p>
       </div>
       <div class="card">
         <div class="ic">⬆️</div>
-        <h3>Self-updating</h3>
-        <p>Checks GitHub for a newer version and installs it in place. A short, encrypted sign-in history shows what signed in where, and when.</p>
+        <h3>Open and up to date</h3>
+        <p>Every line is on GitHub under the GPLv3, and the app updates itself from there. A short, encrypted sign-in history shows what signed in where, and when.</p>
       </div>
     </div>
-    <p class="note" style="margin-top:22px">🔒 <strong>Security &amp; scope.</strong> PassKeyChain manages credentials <em>you already own</em>. Private keys never leave your device; there is no server and no telemetry. Passkey portability follows the FIDO Alliance Credential Exchange direction (2025). Exports can be encrypted with a password in Bitwarden’s format; treat an unencrypted export like any password-vault backup.</p>
+    <p class="note" style="margin-top:22px">🔒 <strong>For passkeys you own.</strong> PassKeyChain holds and uses passkeys of your own accounts. Private keys leave the phone only when you export them yourself; signing happens on the phone, never on a server.</p>
   </div>
 </section>
 
@@ -194,19 +235,19 @@
 <section>
   <div class="wrap">
     <h2>How it works</h2>
-    <p class="sub">Three steps, no account, no server.</p>
+    <p class="sub">Three steps. No account, no server, nobody’s permission.</p>
     <div class="steps">
       <div class="step">
-        <h3>Import</h3>
-        <p>Export your vault from Bitwarden as JSON (preferably “Encrypted”, “Password protected”), open it in PassKeyChain, then delete the export file. Keys are normalised and encrypted into Keystore-backed storage.</p>
+        <h3>Bring your keys</h3>
+        <p>Export your vault from Bitwarden (preferably “Encrypted”, “Password protected”) and open it in PassKeyChain, or fetch the passkeys from another app. Then delete the export file: the passkeys now live, encrypted, on your phone.</p>
       </div>
       <div class="step">
-        <h3>Sign in</h3>
-        <p>On the phone, pick PassKeyChain from the system passkey sheet. On another device, tap <em>Scan QR</em> and point at the sign-in page’s QR.</p>
+        <h3>Sign in your way</h3>
+        <p>On the phone, pick PassKeyChain from the system passkey sheet. On a computer, tap <em>Scan sign-in QR</em> and point the phone at the QR code the sign-in page shows.</p>
       </div>
       <div class="step">
-        <h3>Stay current</h3>
-        <p>The app checks for the newest debug build of main and offers it in place. Export whenever you want a backup.</p>
+        <h3>Keep them yours</h3>
+        <p>Make a password-protected export now and then, and keep it somewhere safe. The app keeps itself up to date from GitHub.</p>
       </div>
     </div>
   </div>
@@ -215,7 +256,7 @@
 <section id="qr-signin">
   <div class="wrap">
     <h2>How signing in with a QR code works</h2>
-    <p class="sub">When a website asks your computer for a passkey that lives on your phone, the computer shows a QR code. You scan it, and a few seconds later you are signed in on the computer, without the private key ever leaving your phone. This is what happens in between.</p>
+    <p class="sub">When a website asks your computer for a passkey that lives on your phone, the computer shows a QR code. You scan it, and a few seconds later you are signed in on the computer, without the private key ever leaving your phone. This is an open standard: the browser does not care which app on which phone answers, as long as it holds the key. That is what lets you choose. This is what happens in between.</p>
 
     <figure class="flow-figure">
       <!-- the animation plays the seven steps; with "reduce motion" the still picture is shown -->
@@ -275,7 +316,7 @@
       <div class="card"><div class="ic">🔗</div><h3>Tied to the real website</h3><p>The browser only asks for a signature for the website you are actually on, and the signature covers that website’s name, so a look-alike site cannot use it.</p></div>
     </div>
 
-    <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the same protocol Android phones and iPhones use for this. PassKeyChain does all seven steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way.</p>
+    <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the open protocol that Android phones and iPhones use for this. Because it is open, an independent app can speak it too: PassKeyChain does all seven steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way. Passkey sovereignty in practice: your key, your phone, the same front door as everyone else.</p>
   </div>
 </section>
 
