@@ -354,7 +354,11 @@ private fun MainScreen(store: PasskeyStore) {
                 text = { Text("Scan sign-in QR") },
                 icon = { Icon(AppIcons.QrCodeScanner, null) },
                 expanded = fabExpanded,
-                onClick = { ctx.startActivity(Intent(ctx, HybridSignInActivity::class.java)) },
+                onClick = {
+                    // jumps in out of this button; Android scales or skips it per its animation settings
+                    val jump = android.app.ActivityOptions.makeCustomAnimation(ctx, R.anim.signin_enter, R.anim.stay)
+                    ctx.startActivity(Intent(ctx, HybridSignInActivity::class.java), jump.toBundle())
+                },
             )
         },
     ) { padding ->

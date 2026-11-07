@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The passkey list stays where it is while the sign-in screen jumps in or out over it. -->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="420" android:fromAlpha="1.0" android:toAlpha="1.0"/>

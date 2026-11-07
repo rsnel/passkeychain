@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sign-in screen jumps out: a little bounce back, then into the button's corner. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shareInterpolator="false">
+    <scale
+        android:duration="360"
+        android:fromXScale="1.0" android:toXScale="0.3"
+        android:fromYScale="1.0" android:toYScale="0.3"
+        android:pivotX="85%" android:pivotY="92%"
+        android:interpolator="@android:anim/anticipate_interpolator"/>
+    <alpha
+        android:startOffset="200"
+        android:duration="160"
+        android:fromAlpha="1.0" android:toAlpha="0.0"
+        android:interpolator="@android:anim/accelerate_interpolator"/>
+</set>

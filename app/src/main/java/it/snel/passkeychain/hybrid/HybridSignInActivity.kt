@@ -117,6 +117,7 @@ import it.snel.passkeychain.store.UserUnlock
 import it.snel.passkeychain.ui.AppIcons
 import it.snel.passkeychain.ui.SiteAvatar
 import it.snel.passkeychain.ui.theme.PassKeyChainTheme
+import it.snel.passkeychain.R
 import it.snel.passkeychain.util.Dbg
 import it.snel.passkeychain.store.SignInHistory
 import it.snel.passkeychain.model.HistoryEntry
@@ -284,6 +285,12 @@ class HybridSignInActivity : FragmentActivity() {
         }
     }
 
+    override fun finish() {
+        super.finish()
+        @Suppress("DEPRECATION")
+        if (Build.VERSION.SDK_INT < 34) overridePendingTransition(R.anim.stay, R.anim.signin_exit)
+    }
+
     private fun openAppSettings() {
         startActivity(
             android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
@@ -293,6 +300,10 @@ class HybridSignInActivity : FragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            // jump out into the corner the screen came from, also on back and swipe
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, R.anim.stay, R.anim.signin_exit)
+        }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         previewView = PreviewView(this).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
@@ -420,7 +431,7 @@ class HybridSignInActivity : FragmentActivity() {
                     } else if (!failed && signDetail != null) {
                         // all steps ticked: leave the list and the picture up for a moment
                         states[Step.Send.ordinal] = State.Done
-                        window.decorView.postDelayed({ if (!isFinishing) finish() }, 1000)
+                        window.decorView.postDelayed({ if (!isFinishing) finish() }, 2000)
                     }
                 }
             } catch (e: Exception) {
