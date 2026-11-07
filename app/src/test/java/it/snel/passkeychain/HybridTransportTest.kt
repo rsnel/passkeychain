@@ -121,4 +121,23 @@ class HybridTransportTest {
         assertEquals(0x01.toByte(), eid[15])
         assertEquals(0.toByte(), transport.buildEidPlaintext(byteArrayOf(1, 2, 3))[14]) // Google: 0
     }
+
+    @Test fun skipsAPublicServerTheBrowserDoesNotKnow() {
+        val oldBrowser = qr.copy(knownDomainCount = 1) // knows Google only
+        val tunnel = PartlyReachable(listOf(getAssertion()), unreachable = emptySet())
+        HybridTransport(FakeBle(), tunnel, listOf(TunnelDomains.APPLE, TunnelDomains.GOOGLE))
+            .authenticate(oldBrowser) { CtapAuthenticator.Decision.NoCredentials }
+        assertEquals(listOf("cable.ua5v.com"), tunnel.urls.map { java.net.URI(it).host })
+    }
+
+    @Test fun onlyUnknownServersGivesAClearError() {
+        val oldBrowser = qr.copy(knownDomainCount = 1)
+        val tunnel = PartlyReachable(listOf(getAssertion()), unreachable = emptySet())
+        val e = runCatching {
+            HybridTransport(FakeBle(), tunnel, listOf(TunnelDomains.APPLE)).authenticate(oldBrowser) { CtapAuthenticator.Decision.Denied }
+        }.exceptionOrNull()
+        assertTrue(e is HybridTransport.SignInFailure)
+        assertTrue(e!!.message!!.startsWith("The browser on the computer doesn't know the tunnel server cable.auth.com."))
+        assertTrue(tunnel.urls.isEmpty()) // nothing connected, nothing broadcast
+    }
 }

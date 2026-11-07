@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -37,6 +36,9 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.width
 import it.snel.passkeychain.hybrid.TunnelDomains
 import it.snel.passkeychain.hybrid.TunnelSettings
 import kotlinx.coroutines.Dispatchers
@@ -44,10 +46,10 @@ import kotlinx.coroutines.withContext
 
 private const val SERVER_HELP = "https://github.com/rsnel/passkeychain/tree/main/server"
 
-private fun describe(number: Int): String = when (number) {
-    TunnelDomains.NONE -> "None"
-    TunnelDomains.GOOGLE -> "Google (cable.ua5v.com)"
-    else -> "${TunnelDomains.hostname(number)} (#$number)"
+private fun describe(number: Int): String {
+    if (number == TunnelDomains.NONE) return "None"
+    val host = TunnelDomains.hostname(number)
+    return TunnelDomains.operator(number)?.let { "$it ($host)" } ?: "$host (#$number)"
 }
 
 /** The tunnel server settings: a first choice, and one for when that cannot be reached. */
@@ -109,10 +111,10 @@ private fun Choice(label: String, value: String, onClick: () -> Unit) {
 }
 
 /**
- * Every server the app can use: Google, then all 65280 computed names, by
- * top-level domain and then alphabetically. Typing a number shows that
- * number's name, so it can be checked against the domain you registered;
- * typing text narrows the list to names containing it.
+ * Every server the app can use: the public ones browsers know by number
+ * (Google, Apple), then all 65280 computed names, by top-level domain and
+ * then alphabetically. Typing a number shows that number's name, so it can be
+ * checked against the domain you registered; typing text narrows the list.
  */
 @Composable
 private fun TunnelPicker(allowNone: Boolean, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
@@ -121,8 +123,12 @@ private fun TunnelPicker(allowNone: Boolean, onPick: (Int) -> Unit, onDismiss: (
     val all by produceState<List<TunnelDomains.Entry>?>(null) {
         value = withContext(Dispatchers.Default) { TunnelDomains.all }
     }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
+    // the platform's dialog width is too narrow for the names: use the screen, less a margin
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).fillMaxHeight(0.85f),
+        ) {
             Column(Modifier.padding(top = 20.dp, start = 20.dp, end = 20.dp, bottom = 8.dp)) {
                 Text("Choose a tunnel server", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(12.dp))
@@ -139,25 +145,34 @@ private fun TunnelPicker(allowNone: Boolean, onPick: (Int) -> Unit, onDismiss: (
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 } else {
                     val shown = remember(entries, query) { TunnelDomains.search(query, entries) }
+                    val public = shown.filter { it.number < TunnelDomains.FIRST_COMPUTED }
+                    val computed = shown.filter { it.number >= TunnelDomains.FIRST_COMPUTED }
                     val number = query.trim().removePrefix("#").toIntOrNull()
-                    Text(
+                    if (number != null || shown.isEmpty()) Text(
                         when {
-                            number != null && shown.isEmpty() -> "Own servers are numbers 256 to 65535."
+                            number != null && shown.isEmpty() ->
+                                "Public servers are 0 to ${TunnelDomains.PUBLIC.size - 1}, own servers 256 to 65535."
                             number != null -> "Check that this is the name you registered."
-                            shown.isEmpty() -> "No name contains \"${query.trim()}\"."
-                            else -> "%,d servers".format(shown.size)
+                            else -> "No name contains \"${query.trim()}\"."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     LazyColumn(Modifier.weight(1f).fillMaxSize()) {
                         if (allowNone && query.isBlank()) item(key = "none") {
-                            PickerRow("None", "no second choice") { onPick(TunnelDomains.NONE) }
-                            HorizontalDivider()
+                            PickerRow("None", "no second choice", mono = false) { onPick(TunnelDomains.NONE) }
                         }
-                        items(shown, key = { it.number }) { e ->
-                            if (e.number == TunnelDomains.GOOGLE) PickerRow("Google", e.host) { onPick(e.number) }
-                            else PickerRow(e.host, "#${e.number}") { onPick(e.number) }
+                        if (public.isNotEmpty()) {
+                            item(key = "h-public") { Header("Public servers", "known to browsers by number") }
+                            items(public, key = { it.number }) { e ->
+                                PickerRow("${TunnelDomains.operator(e.number)} · ${e.host}", "#${e.number}", mono = false) { onPick(e.number) }
+                            }
+                        }
+                        if (computed.isNotEmpty()) {
+                            item(key = "h-own") { Header("For your own server", "%,d names".format(computed.size)) }
+                            items(computed, key = { it.number }) { e ->
+                                PickerRow(e.host, "#${e.number}", mono = true) { onPick(e.number) }
+                            }
                         }
                     }
                 }
@@ -168,12 +183,28 @@ private fun TunnelPicker(allowNone: Boolean, onPick: (Int) -> Unit, onDismiss: (
 }
 
 @Composable
-private fun PickerRow(title: String, note: String, onClick: () -> Unit) {
+private fun Header(title: String, note: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp, start = 4.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun PickerRow(title: String, note: String, mono: Boolean, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontFamily = FontFamily.Monospace)
-        Text(note, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            title,
+            Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = if (mono) FontFamily.Monospace else null,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

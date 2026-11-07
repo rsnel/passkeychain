@@ -4,13 +4,18 @@ import java.security.MessageDigest
 
 /**
  * Tunnel servers, by the 16-bit number the phone puts in its Bluetooth advert
- * (EID bytes 14-15). 0 is Google's cable.ua5v.com, from the browser's built-in
- * list. For 256-65535 the browser computes the hostname itself (Chromium's
+ * (EID bytes 14-15). 0-255 are the public servers in the browser's built-in
+ * list (Chromium's kAssignedDomains; QR field 2 says how many the browser knows).
+ * For 256-65535 the browser computes the hostname itself (Chromium's
  * tunnelserver::DecodeDomain), so anyone can run a server under such a name.
  * server/tunnel-hostnames.py does the same computation.
  */
 object TunnelDomains {
     const val GOOGLE = 0
+    const val APPLE = 1
+
+    /** The public servers browsers know by number, and who runs them (Chromium's kAssignedDomains). */
+    val PUBLIC = listOf("cable.ua5v.com" to "Google", "cable.auth.com" to "Apple")
     /** "no second choice" */
     const val NONE = -1
     const val FIRST_COMPUTED = 256
@@ -21,10 +26,21 @@ object TunnelDomains {
 
     /** The hostname for tunnel server [number], or null if the app cannot use that number. */
     fun hostname(number: Int): String? = when (number) {
-        GOOGLE -> "cable.ua5v.com"
+        in PUBLIC.indices -> PUBLIC[number].first
         in FIRST_COMPUTED..LAST_COMPUTED -> computed(number)
         else -> null
     }
+
+    /** Who runs public server [number], or null for a computed one. */
+    fun operator(number: Int): String? = PUBLIC.getOrNull(number)?.second
+
+    /**
+     * Whether a browser that knows [knownCount] public servers (QR field 2) can
+     * find server [number]. Google's is known to every browser (an old QR may
+     * leave the field out); computed names need no list.
+     */
+    fun browserKnows(number: Int, knownCount: Int): Boolean =
+        number == GOOGLE || number >= FIRST_COMPUTED || number < knownCount
 
     /** SHA-256("caBLEv2 tunnel server domain" || number (2 bytes, little-endian) || 0x00), base32-encoded. */
     private fun computed(number: Int): String {
@@ -46,18 +62,18 @@ object TunnelDomains {
 
     data class Entry(val number: Int, val host: String)
 
-    /** Google, then every computed name, ordered by top-level domain and then alphabetically. */
+    /** The public servers, then every computed name, ordered by top-level domain and then alphabetically. */
     val all: List<Entry> by lazy {
-        listOf(Entry(GOOGLE, hostname(GOOGLE)!!)) +
+        PUBLIC.mapIndexed { i, (host, _) -> Entry(i, host) } +
             (FIRST_COMPUTED..LAST_COMPUTED).map { Entry(it, computed(it)) }
                 .sortedWith(compareBy({ it.host.substringAfterLast('.') }, { it.host }))
     }
 
-    /** [all] narrowed by [query]: a number finds that number, text finds names containing it. */
+    /** [all] narrowed by [query]: a number finds that number, text finds names (or operators) containing it. */
     fun search(query: String, entries: List<Entry> = all): List<Entry> {
         val q = query.trim().lowercase().removePrefix("#")
         if (q.isEmpty()) return entries
         q.toIntOrNull()?.let { n -> return entries.filter { it.number == n } }
-        return entries.filter { q in it.host }
+        return entries.filter { q in it.host || operator(it.number)?.lowercase()?.contains(q) == true }
     }
 }

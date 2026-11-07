@@ -124,9 +124,19 @@ class HybridTransport(
         // 1. Open /cable/new/ first: the routing ID for the advert comes from its response headers.
         //    The first tunnel server that answers; the advert tells the browser which one.
         val tunnelPath = "/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
+        //    A public server the browser doesn't know (QR field 2) is skipped: the
+        //    browser could not find it from the advert.
+        val usable = servers.filter { TunnelDomains.hostname(it) != null && TunnelDomains.browserKnows(it, qr.knownDomainCount) }
+        if (usable.isEmpty()) {
+            val names = servers.mapNotNull(TunnelDomains::hostname).joinToString(" or ")
+            throw SignInFailure(
+                "The browser on the computer doesn't know the tunnel server $names. " +
+                    "Choose another one under Tunnel server in the app's menu, or update the browser.",
+            )
+        }
         val failures = mutableListOf<SignInFailure>()
         var connected: Pair<Int, TunnelClient.NewTunnel>? = null
-        for (domain in servers) {
+        for (domain in usable) {
             val host = TunnelDomains.hostname(domain) ?: continue
             progress(Progress.TunnelOpening(host))
             try {
@@ -143,7 +153,7 @@ class HybridTransport(
             failures.isEmpty() -> SignInFailure("No tunnel server is set.")
             else -> SignInFailure(
                 "Could not reach the tunnel servers " +
-                    servers.mapNotNull(TunnelDomains::hostname).joinToString(" or ") +
+                    usable.mapNotNull(TunnelDomains::hostname).joinToString(" or ") +
                     ". Check the phone's internet connection.",
                 failures.last(),
             )

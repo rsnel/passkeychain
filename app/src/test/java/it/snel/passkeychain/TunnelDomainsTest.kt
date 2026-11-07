@@ -16,17 +16,18 @@ class TunnelDomainsTest {
     }
 
     @Test fun onlyGoogleAndComputedNumbers() {
-        assertNull(TunnelDomains.hostname(1))
+        assertEquals("cable.auth.com", TunnelDomains.hostname(1))
+        assertNull(TunnelDomains.hostname(2))
         assertNull(TunnelDomains.hostname(255))
         assertNull(TunnelDomains.hostname(65536))
         assertTrue(TunnelDomains.hostname(65535)!!.startsWith("cable."))
     }
 
-    @Test fun allIsGoogleThenByTldThenName() {
+    @Test fun allIsPublicThenByTldThenName() {
         val all = TunnelDomains.all
-        assertEquals(1 + 65280, all.size)
-        assertEquals(0, all[0].number)
-        val rest = all.drop(1).map { it.host }
+        assertEquals(2 + 65280, all.size)
+        assertEquals(listOf(0, 1), all.take(2).map { it.number })
+        val rest = all.drop(2).map { it.host }
         assertEquals(rest.sortedWith(compareBy({ it.substringAfterLast('.') }, { it })), rest)
         assertTrue(rest.first().endsWith(".com") && rest.last().endsWith(".org"))
     }
@@ -36,6 +37,14 @@ class TunnelDomainsTest {
         assertEquals(listOf(266), TunnelDomains.search("#266").map { it.number })
         assertEquals(listOf(266), TunnelDomains.search("wufkweyy").map { it.number })
         assertTrue(TunnelDomains.search("100").isEmpty())
+        assertEquals(listOf(1), TunnelDomains.search("apple").map { it.number })
         assertEquals(TunnelDomains.all.size, TunnelDomains.search("  ").size)
+    }
+
+    @Test fun browserKnowsFromQrField2() {
+        assertTrue(TunnelDomains.browserKnows(0, 0))      // Google: always
+        assertTrue(TunnelDomains.browserKnows(1, 2))      // Apple, browser knows 2
+        assertTrue(!TunnelDomains.browserKnows(1, 1))     // Apple, browser knows only Google
+        assertTrue(TunnelDomains.browserKnows(266, 0))    // computed: no list needed
     }
 }

@@ -781,7 +781,7 @@ From Chromium's `v2_constants.h` and related code **[chromium]**:
 | Item | Value |
 |---|---|
 | Service UUID | `0000FFF9-0000-1000-8000-00805F9B34FB` |
-| Tunnel server domain | `cable.ua5v.com` (KnownDomainID 0) |
+| Tunnel server domains | `cable.ua5v.com` (0, Google), `cable.auth.com` (1, Apple); 256–65535 computed |
 | WebSocket subprotocol | `fido.cable` |
 | Protocol name | `Noise_KNpsk0_P256_AESGCM_SHA256` |
 | Prologue | `0x01` |
