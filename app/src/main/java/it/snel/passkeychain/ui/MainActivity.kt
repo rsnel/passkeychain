@@ -693,7 +693,8 @@ private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onC
                         headlineContent = { Text(e.rpId.ifBlank { "Unknown site" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         supportingContent = {
                             Column {
-                                Text(listOf(e.account, "$what $where").filter { it.isNotBlank() }.joinToString(" · "))
+                                if (e.account.isNotBlank()) Text(e.account)
+                                Text("$what $where")
                                 Text(formatTime(e.time), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 if (e.detail.isNotBlank()) Text(e.detail, color = red)
                             }

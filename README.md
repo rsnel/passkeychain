@@ -81,6 +81,21 @@ Release builds are prepared but not used yet: pushing a `v*` tag would build
 `keystore.properties.example` to `keystore.properties`), and publish it as a
 GitHub release that the release app follows via `/releases/latest`.
 
+## Import and export
+
+- **Bitwarden** JSON exports, unencrypted or password protected (below).
+- **Credential Exchange (CXF)** documents: the FIDO Alliance format for moving
+  passkeys between managers. *Import from another app* uses Android's
+  credential transfer (`androidx.credentials.providerevents`, beta) to fetch
+  them from another manager on the phone that offers it; a CXF file can be
+  imported like a Bitwarden file.
+- **Export** writes Bitwarden's format (optionally password protected).
+  PassKeyChain does not offer its passkeys to *other apps* through Android's
+  credential transfer: that would hand every private key to another app
+  through an API still in beta, guarded by checks each app has to get right
+  itself. An export file you make and move yourself keeps that decision
+  with you.
+
 ## Import format
 
 PassKeyChain reads and writes Bitwarden's unencrypted JSON export
