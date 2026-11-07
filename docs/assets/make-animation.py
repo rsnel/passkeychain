@@ -2,7 +2,7 @@
 #   qr-signin.svg                  the still picture (step colours), for "reduce motion"
 #   qr-signin-animated.svg         the 8-step animation (SMIL, 18 s loop), caption below
 #   qr-signin-animated-wide.svg    desktops: the steps listed beside the scene
-#   qr-signin-animated-phone.svg   phones: larger labels and a big caption card
+#   qr-signin-animated-phone.svg   phones: larger labels, a big caption card, 4.5 s per step
 # Run from the repository root:
 #   python3 docs/assets/make-animation.py docs/assets/qr-signin-source.svg docs/assets/qr-signin.svg \
 #     docs/assets/qr-signin-animated.svg docs/assets/qr-signin-animated-wide.svg docs/assets/qr-signin-animated-phone.svg
@@ -28,10 +28,17 @@ L[69] = L[69].replace(">7</text>", ">8</text>")   # line 70: badge on "Signed in
 L = [recolour(x) for x in L]
 open(out_static, 'w').write('\n'.join(L))
 
-T = 18.0
-WIN = {i: ((i-1)*2.0, (i-1)*2.0+2.0) for i in range(1, 9)}
-WIN[8] = (14.0, 17.4)
-END = 17.6
+def set_timing(step):
+    """[step] seconds per step; the last step is held 1.4 s longer, then the loop restarts"""
+    global T, WIN, END
+    WIN = {i: ((i-1)*step, i*step) for i in range(1, 9)}
+    WIN[8] = (7*step, 8*step + 1.4)
+    END = round(WIN[8][1] + .2, 3)
+    T = round(END + .4, 3)
+
+STEP_SECONDS = 2.0          # desktops and tablets: the steps are listed, or the caption is short
+PHONE_STEP_SECONDS = 4.5    # phones: time to read the caption card
+set_timing(STEP_SECONDS)
 f = lambda t: f"{t/T:.4f}"
 
 def appear(step):
@@ -158,7 +165,7 @@ def build_scene(k=1.0):
     o.append(token(5, P2C, k=k))
     o.append(token(6, C2P, k=k))
     o.append(ripples(896, 282, 7, n=3, reach=60, start=28))   # the unlock, at the fingerprint
-    o.append(token(8, P2C, travel=(14.0, 16.2), k=k))
+    o.append(token(8, P2C, travel=(WIN[8][0], WIN[8][0] + 2.2), k=k))
     return o
 
 o = [SVG_OPEN, TITLE] + build_scene()
@@ -240,8 +247,10 @@ def phone_captions(y0=735):
 
 out_phone = sys.argv[5] if len(sys.argv) > 5 else None
 if out_phone:
+    set_timing(PHONE_STEP_SECONDS)
     phone = [SVG_OPEN.replace("viewBox='0 -45 1000 865'", "viewBox='0 -45 1000 1265'"), TITLE] + build_scene(1.4) + [phone_captions(), "</svg>"]
     open(out_phone, 'w').write('\n'.join(phone))
+    set_timing(STEP_SECONDS)
 
 if out_wide:
     wide = [o[0].replace("viewBox='0 -45 1000 865'", "viewBox='0 -45 1500 750'")] + scene + [side_panel(), "</svg>"]
