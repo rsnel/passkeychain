@@ -261,16 +261,40 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
                     Log.w(TAG, "receive(): empty plaintext, continuing")
                     continue
                 }
-                val typeByte = pt[0].toInt() and 0xFF
-                val payload = pt.copyOfRange(1, pt.size)
-                Log.d(TAG, "receive(): type byte = $typeByte, payload ${payload.size} bytes: ${hex(payload)}")
-                when (typeByte) {
-                    0x00 -> return payload  // MessageType::kCTAP
-                    0x01 -> { Log.d(TAG, "receive(): ignoring kJSON message"); continue }
-                    0x02 -> { Log.w(TAG, "receive(): kShutdown from Chrome"); throw HybridTransport.DeviceStageMissing("Chrome requested shutdown") }
-                    0x03 -> { Log.d(TAG, "receive(): ignoring kUpdate message"); continue }
-                    else -> { Log.w(TAG, "receive(): unknown type byte $typeByte, returning payload"); return payload }
+                val first = pt[0].toInt() and 0xFF
+                val second = if (pt.size >= 2) pt[1].toInt() and 0xFF else -1
+                val secondIsCborMap = second in 0xA0..0xBF
+                Log.d(TAG, "receive(): first=0x%02x second=0x%02x cborMap=%b size=${pt.size}".format(first, second and 0xFF, secondIsCborMap))
+
+                // kShutdown: 1-byte message 0x02 (MessageType::kShutdown)
+                if (pt.size == 1 && first == 0x02) {
+                    Log.w(TAG, "receive(): kShutdown from Chrome")
+                    throw HybridTransport.DeviceStageMissing("Chrome requested shutdown")
                 }
+                // kUpdate: 1-byte message 0x03
+                if (pt.size == 1 && first == 0x03) {
+                    Log.d(TAG, "receive(): kUpdate, ignoring")
+                    continue
+                }
+                // MessageType::kCTAP (0x00) prefix, followed by a CTAP2 command byte
+                if (first == 0x00 && pt.size >= 2 && second in 0x01..0x04) {
+                    Log.d(TAG, "receive(): MessageType=kCTAP prefix, CTAP2 cmd=0x%02x".format(second))
+                    return pt.copyOfRange(1, pt.size)
+                }
+                // Bare CTAP2 command: first byte is 0x01/0x02/0x04 followed by CBOR map.
+                // Chrome in some configurations sends CTAP2 requests without the
+                // MessageType prefix (observed for kAuthenticatorGetAssertion).
+                if (first in 0x01..0x04 && secondIsCborMap) {
+                    Log.d(TAG, "receive(): bare CTAP2 cmd=0x%02x (no MessageType prefix)".format(first))
+                    return pt
+                }
+                // kJSON prefix with non-CBOR payload: ignore
+                if (first == 0x01) {
+                    Log.d(TAG, "receive(): kJSON prefix, ignoring")
+                    continue
+                }
+                Log.w(TAG, "receive(): unrecognized message (first=0x%02x size=${pt.size}), discarding".format(first))
+                continue
             }
         }
 
