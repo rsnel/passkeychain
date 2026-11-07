@@ -26,8 +26,6 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -88,6 +86,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -306,7 +305,12 @@ class HybridSignInActivity : FragmentActivity() {
         }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        previewView = PreviewView(this).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
+        previewView = PreviewView(this).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            // a TextureView, clipped like any view: a SurfaceView scaled to fill
+            // would draw the camera over the step list below it
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        }
         setContent { PassKeyChainTheme { Screen() } }
 
         if (PasskeyStore(applicationContext).load().isEmpty()) {
@@ -565,7 +569,7 @@ class HybridSignInActivity : FragmentActivity() {
     private fun Screen() {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
             // upper half: the camera, or what came of the scan
-            Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+            Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().background(Color.Black)) {
                 val still = frozen
                 if (states[Step.Scan.ordinal] == State.Active) {
                     AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
@@ -598,28 +602,30 @@ class HybridSignInActivity : FragmentActivity() {
                     Icon(Icons.Rounded.Close, "Cancel")
                 }
             }
-            // lower half: the steps, live
-            Column(Modifier.weight(1f).fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                // after a failure the steps that will not happen any more are left out
-                val lastShown = states.indexOfFirst { it is State.Failed }.takeIf { it >= 0 } ?: Step.entries.lastIndex
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    Text("Sign in on your computer", style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.height(10.dp))
-                    for (step in Step.entries.take(lastShown + 1)) when (step) {
-                        Step.Scan -> StepRow(step, "Scan the QR code", scanHint ?: "Point the camera at the QR code on your computer")
-                        Step.Tunnel -> StepRow(step, "Set up the tunnel", "Connecting to the tunnel server" + (tunnelHost?.let { " $it" } ?: ""))
-                        Step.Bluetooth -> StepRow(step, "Tell the browser where to go", "A Bluetooth broadcast, so the computer knows this phone is nearby")
-                        Step.BrowserHello -> StepRow(step, "The browser starts the handshake", "Waiting for the computer to connect")
-                        Step.PhoneHello -> StepRow(step, "The phone answers the handshake", "Agreeing on keys, encrypted end to end")
-                        Step.Request -> StepRow(step, if (creating) "The browser asks for a new passkey" else "The browser asks for a signature", "Waiting for the computer's request")
-                        Step.Approve -> StepRow(
-                            step, "You approve",
-                            if (creating) signDetail?.let { "For $it: unlock to approve" } ?: "Confirm and unlock"
-                            else signDetail?.let { "As $it: unlock to approve" } ?: "Choose a passkey and unlock",
-                        )
-                        Step.Send -> StepRow(step, if (creating) "The phone sends the new passkey" else "The phone sends the signature", "Sending it to the computer")
-                    }
+            // lower part: the steps at their natural size, always all of them in
+            // the same place, and one fixed area under them for what is going on
+            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp)) {
+                Text("Sign in on your computer", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(8.dp))
+                for (step in Step.entries) StepRow(step, titleFor(step))
+                Spacer(Modifier.height(10.dp))
+                val failure = states.firstNotNullOfOrNull { it as? State.Failed }
+                val active = Step.entries.firstOrNull { states[it.ordinal] == State.Active }
+                val hint = when {
+                    failure != null -> failure.message
+                    active != null -> detailFor(active)
+                    states[Step.Send.ordinal] == State.Done -> if (creating) "Passkey created." else "Signed in."
+                    else -> ""
                 }
+                Text(
+                    hint,
+                    Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (failure != null) StampRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                    minLines = 3,
+                    maxLines = 5,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 if (failed) {
                     Row(Modifier.align(Alignment.End)) {
                         if (settingsButton) {
@@ -639,11 +645,35 @@ class HybridSignInActivity : FragmentActivity() {
         }
     }
 
+    private fun titleFor(step: Step) = when (step) {
+        Step.Scan -> "Scan the QR code"
+        Step.Tunnel -> "Set up the tunnel"
+        Step.Bluetooth -> "Tell the browser where to go"
+        Step.BrowserHello -> "The browser starts the handshake"
+        Step.PhoneHello -> "The phone answers the handshake"
+        Step.Request -> if (creating) "The browser asks for a new passkey" else "The browser asks for a signature"
+        Step.Approve -> "You approve"
+        Step.Send -> if (creating) "The phone sends the new passkey" else "The phone sends the signature"
+    }
+
+    private fun detailFor(step: Step) = when (step) {
+        Step.Scan -> scanHint ?: "Point the camera at the QR code on your computer."
+        Step.Tunnel -> "Connecting to the tunnel server" + (tunnelHost?.let { " $it" } ?: "") + "."
+        Step.Bluetooth -> "A Bluetooth broadcast, so the computer knows this phone is nearby."
+        Step.BrowserHello -> "Waiting for the computer to connect."
+        Step.PhoneHello -> "Agreeing on keys, encrypted end to end."
+        Step.Request -> "Waiting for the computer's request."
+        Step.Approve ->
+            if (creating) signDetail?.let { "For $it: unlock to approve." } ?: "Confirm and unlock."
+            else signDetail?.let { "As $it: unlock to approve." } ?: "Choose a passkey and unlock."
+        Step.Send -> "Sending it to the computer."
+    }
+
     @Composable
-    private fun StepRow(step: Step, title: String, detail: String) {
+    private fun StepRow(step: Step, title: String) {
         val state = states[step.ordinal]
         val scheme = MaterialTheme.colorScheme
-        // TalkBack: one item per step, with its state; a failure is announced as it happens
+        // TalkBack: one item per step, with its state; the hint area below announces changes
         val spokenState = when (state) {
             State.Pending -> "waiting"
             State.Active -> "in progress"
@@ -651,44 +681,30 @@ class HybridSignInActivity : FragmentActivity() {
             is State.Failed -> "failed"
         }
         Row(
-            Modifier.fillMaxWidth().padding(vertical = 4.dp).semantics(mergeDescendants = true) {
-                stateDescription = spokenState
-                if (state is State.Failed) liveRegion = LiveRegionMode.Assertive
-            },
-            verticalAlignment = Alignment.Top,
+            Modifier.fillMaxWidth().padding(vertical = 3.dp).semantics(mergeDescendants = true) { stateDescription = spokenState },
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
                 when (state) {
-                    State.Pending -> Box(Modifier.size(22.dp).border(2.dp, scheme.outlineVariant, CircleShape))
+                    State.Pending -> Box(Modifier.size(20.dp).border(2.dp, scheme.outlineVariant, CircleShape))
                     State.Active -> CircularProgressIndicator(
-                        Modifier.size(22.dp), color = StampYellow, trackColor = StampYellow.copy(alpha = 0.25f), strokeWidth = 3.dp,
+                        Modifier.size(20.dp), color = StampYellow, trackColor = StampYellow.copy(alpha = 0.25f), strokeWidth = 3.dp,
                     )
-                    State.Done -> Box(Modifier.size(24.dp).clip(CircleShape).background(StampGreen), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color.White)
+                    State.Done -> Box(Modifier.size(22.dp).clip(CircleShape).background(StampGreen), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Check, null, Modifier.size(15.dp), tint = Color.White)
                     }
-                    is State.Failed -> Box(Modifier.size(24.dp).clip(CircleShape).background(StampRed), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Close, null, Modifier.size(16.dp), tint = Color.White)
+                    is State.Failed -> Box(Modifier.size(22.dp).clip(CircleShape).background(StampRed), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Close, null, Modifier.size(15.dp), tint = Color.White)
                     }
                 }
             }
             Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (state == State.Pending) scheme.onSurfaceVariant else scheme.onSurface,
-                )
-                val text = when (state) {
-                    is State.Failed -> state.message
-                    State.Active -> detail
-                    else -> null
-                }
-                if (text != null) Text(
-                    text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (state is State.Failed) StampRed else scheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                title,
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+                color = if (state == State.Pending) scheme.onSurfaceVariant else scheme.onSurface,
+            )
         }
     }
 
