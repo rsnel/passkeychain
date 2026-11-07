@@ -478,9 +478,9 @@ Response, "none" attestation [spec]:
   send BE without BS (0x0D) until then, and 0x1D afterwards. BE never
   changes.
 
-[unverified] against Chrome so far: the creation flow has unit tests that
-check the encoding and that a later assertion verifies against the
-attested public key, but has not yet been run against a real site.
+[verified] against Chrome: a passkey created this way on webauthn.io
+registered, and a later sign-in with it was accepted. Unit tests check
+the encoding and that an assertion verifies against the attested key.
 
 ======================================================
 10. PADDING AND FRAMING SUMMARY

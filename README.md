@@ -37,8 +37,8 @@ sign-in):
 That is about 1000 lines of Kotlin in `hybrid/`.
 
 **Creating passkeys** on the phone for a site on a computer (the site's
-"create a passkey" QR code): implemented and unit-tested, not yet tried
-against a real site. A new passkey is backup-eligible but not backed up
+"create a passkey" QR code): works; tested with webauthn.io (register,
+then sign in with the new passkey). A new passkey is backup-eligible but not backed up
 until it is exported to Bitwarden.
 
 **Sign-in history**: the last 200 sign-ins (site, account, time, outcome),
