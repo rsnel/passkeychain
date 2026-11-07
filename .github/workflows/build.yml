@@ -71,9 +71,14 @@ jobs:
       - name: Unit tests and APK
         run: |
           set -o pipefail
-          task=assembleDebug
-          if [ "$IS_RELEASE" = true ]; then task=assembleRelease; fi
-          ./gradlew --no-daemon testDebugUnitTest "$task" 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+          if [ "$IS_RELEASE" = true ]; then
+            tasks="assembleRelease"
+          else
+            # also an unsigned release build (R8 shrinking), so a problem with
+            # it shows up on main and not only when a v* tag is pushed
+            tasks="assembleDebug assembleRelease"
+          fi
+          ./gradlew --no-daemon testDebugUnitTest $tasks 2>&1 | tee "$RUNNER_TEMP/gradle.log"
 
       # The first compiler, test and Gradle errors as one annotation: visible
       # in the run summary (and the API) without reading the whole log.
