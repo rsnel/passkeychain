@@ -14,6 +14,16 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
@@ -405,7 +415,7 @@ class HybridSignInActivity : FragmentActivity() {
                     AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
                     Viewfinder()
                 } else if (still != null) {
-                    Magic(still, animate = !failed)
+                    Magic(still, animate = !failed, approved = states[Step.Sign.ordinal] == State.Done)
                 } else {
                     Column(
                         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primaryContainer),
@@ -501,15 +511,25 @@ class HybridSignInActivity : FragmentActivity() {
      * sweeps across it and a few sparkles twinkle along its edges.
      */
     @Composable
-    private fun Magic(f: Frozen, animate: Boolean) {
+    private fun Magic(f: Frozen, animate: Boolean, approved: Boolean) {
         var time by remember { mutableFloatStateOf(0f) }
-        LaunchedEffect(animate) {
-            if (!animate) return@LaunchedEffect
+        LaunchedEffect(animate, approved) {
+            if (!animate || approved) return@LaunchedEffect
             val start = withFrameNanos { it } - (time * 1e9).toLong()
             while (true) withFrameNanos { time = (it - start) / 1e9f }
         }
         val accent = MaterialTheme.colorScheme.primaryContainer
         val gold = Color(0xFFFFD35C)
+        val green = Color(0xFF1E9E5A)
+        // the stamp lands: from big and transparent to its size, quickly
+        val stamp by animateFloatAsState(if (approved) 1f else 0f, tween(280, easing = FastOutSlowInEasing), label = "stamp")
+        val textMeasurer = rememberTextMeasurer()
+        val stampText = remember(textMeasurer) {
+            textMeasurer.measure(
+                AnnotatedString("APPROVED"),
+                TextStyle(fontSize = 44.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp, color = green),
+            )
+        }
         val sparkles = remember(f) {
             val rnd = java.util.Random(7)
             List(12) { Sparkle(rnd.nextFloat(), 6f + 22f * rnd.nextFloat(), 5f + 6f * rnd.nextFloat(), rnd.nextFloat(), 0.35f + 0.4f * rnd.nextFloat()) }
@@ -525,6 +545,27 @@ class HybridSignInActivity : FragmentActivity() {
 
                 drawRect(Color.Black.copy(alpha = 0.4f))
                 drawPath(code, Color.Transparent, blendMode = BlendMode.Clear)
+                if (approved) {
+                    drawPath(code, green.copy(alpha = 0.9f), style = Stroke(3.dp.toPx(), join = StrokeJoin.Round))
+                    // a big green rubber stamp over the code
+                    val bounds = code.getBounds()
+                    val centre = bounds.center
+                    val pad = 10.dp.toPx()
+                    val w = stampText.size.width + 2 * pad
+                    val h = stampText.size.height + 2 * pad
+                    val fit = bounds.width * 0.95f / w
+                    val factor = fit * (1.8f - 0.8f * stamp)
+                    withTransform({ rotate(-14f, centre); scale(factor, factor, centre) }) {
+                        val topLeft = centre - Offset(w / 2, h / 2)
+                        drawRoundRect(Color.White.copy(alpha = 0.78f * stamp), topLeft, Size(w, h), CornerRadius(10.dp.toPx()))
+                        drawRoundRect(
+                            green.copy(alpha = stamp), topLeft, Size(w, h), CornerRadius(10.dp.toPx()),
+                            style = Stroke(4.dp.toPx() / fit),
+                        )
+                        drawText(stampText, topLeft = centre - Offset(stampText.size.width / 2f, stampText.size.height / 2f), alpha = stamp)
+                    }
+                    return@Canvas
+                }
                 if (!animate) {
                     drawPath(code, accent.copy(alpha = 0.6f), style = Stroke(2.dp.toPx(), join = StrokeJoin.Round))
                     return@Canvas
