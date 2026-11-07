@@ -120,7 +120,7 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
      * Noise state, mirroring device/fido/cable/noise.cc.
      */
     private inner class NoiseState(
-        private val peerIdentity65: ByteArray,
+        val peerIdentity65: ByteArray,
         private val psk: ByteArray,
     ) {
         var h = ByteArray(32)
@@ -338,6 +338,21 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             Log.d(TAG, "after MixKey(ee) ck = ${hex(noise.ck)}")
             Log.d(TAG, "after MixKey(ee) k  = ${hex(noise.k)}")
             Log.d(TAG, "after MixKey(ee) h  = ${hex(noise.h)}")
+
+            // KNpsk0 msg2 must also mix the 'se' DH. RespondToHandshake in
+            // v2_handshake.cc does, when peer_identity is set:
+            //   ECDH_compute_key(shared_key_se, peer_identity_point, ephemeral_key);
+            //   noise.MixKey(shared_key_se);
+            // peer_identity_point is the QR's static public key; ephemeral_key
+            // is our responder ephemeral. From our side that is
+            // ECDH(ephR_private, peerIdentity65).
+            val ckBeforeSe = noise.ck.copyOf()
+            val se = ecdh(ephR.private as ECPrivateKey, noise.peerIdentity65)
+            Log.d(TAG, "msg2-check ck_before_se = ${hex(ckBeforeSe)}")
+            Log.d(TAG, "msg2-check se          = ${hex(se)}")
+            noise.mixKey(se)
+            Log.d(TAG, "after MixKey(se) ck = ${hex(noise.ck)}")
+            Log.d(TAG, "after MixKey(se) k  = ${hex(noise.k)}")
 
             val tag2 = noise.encryptAndHash(ByteArray(0))
             val msg2 = ephPubR + tag2
