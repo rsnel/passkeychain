@@ -167,12 +167,16 @@ class HybridSignInActivity : FragmentActivity() {
     // ---- exchange -------------------------------------------------------------------
 
     private var bleAdvertiser: AndroidBleAdvertiser? = null
+    @Volatile private var transport: HybridTransport? = null
     /** The worker thread waits on this for the user's decision. */
     @Volatile private var pending: CompletableFuture<Decision>? = null
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
         if (granted[Manifest.permission.CAMERA] == true || hasPermission(Manifest.permission.CAMERA)) startCamera()
-        else set(Step.Scan, State.Failed("PassKeyChain needs the camera to scan the QR code."))
+        else {
+            settingsButton = true
+            set(Step.Scan, State.Failed("PassKeyChain needs the camera to scan the QR code. Allow it in the app's settings."))
+        }
     }
 
     private fun hasPermission(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
@@ -266,8 +270,11 @@ class HybridSignInActivity : FragmentActivity() {
                 val code = codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE && it.rawValue != null } ?: return@addOnSuccessListener
                 val text = code.rawValue!!
                 if (scanned) return@addOnSuccessListener
-                val qr = if (FidoQr.isFidoQr(text)) runCatching { FidoQr.parse(text) }.getOrNull() else null
-                if (qr == null) { scanHint = "That QR code is not a passkey sign-in. Keep scanning."; return@addOnSuccessListener }
+                if (!FidoQr.isFidoQr(text)) { scanHint = "That QR code is not a passkey sign-in. Keep scanning."; return@addOnSuccessListener }
+                val qr = runCatching { FidoQr.parse(text) }
+                    .onFailure { Dbg.w(TAG, "FIDO QR not readable: ${it.message}") }
+                    .getOrNull()
+                if (qr == null) { scanHint = "That sign-in QR code could not be read. Hold the phone steady and keep scanning."; return@addOnSuccessListener }
                 scanned = true
                 scannedQr = qr
                 frozen = runCatching { freeze(code, imageW, imageH) }.getOrNull() // before the camera stops
@@ -318,12 +325,18 @@ class HybridSignInActivity : FragmentActivity() {
                 HybridTransport.Progress.Broadcasting -> done(Step.Bluetooth, Step.KeyExchange)
             }
         }
+        this.transport = transport
         Thread({
             try {
-                transport.authenticate(qr) { request -> choose(request) }
-                Dbg.d(TAG, "authenticate() returned")
+                val response = transport.authenticate(qr) { request -> choose(request) }
+                Dbg.d(TAG, "authenticate() returned status 0x%02x".format(response[0]))
                 runOnUiThread {
-                    if (!failed && signDetail != null) {
+                    if (isDestroyed) return@runOnUiThread
+                    if (response[0] != 0.toByte() && !failed) {
+                        // an answer other than a signature that no step has explained yet
+                        val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Sign.ordinal
+                        states[active] = State.Failed("The computer's request could not be handled (CTAP error 0x%02x).".format(response[0]))
+                    } else if (!failed && signDetail != null) {
                         // all steps ticked: leave the list and the picture up for a moment
                         states[Step.Sign.ordinal] = State.Done
                         window.decorView.postDelayed({ if (!isFinishing) finish() }, 1000)
@@ -331,10 +344,12 @@ class HybridSignInActivity : FragmentActivity() {
                 }
             } catch (e: Exception) {
                 Dbg.e(TAG, "authenticate() failed", e)
+                val message = if (e is HybridTransport.SignInFailure) e.message ?: "The sign-in failed."
+                    else "Something went wrong: ${e.message ?: e.javaClass.simpleName}"
                 runOnUiThread {
-                    if (!failed) {
+                    if (!failed && !isDestroyed) {
                         val active = states.indexOfFirst { it == State.Active }.takeIf { it >= 0 } ?: Step.Sign.ordinal
-                        states[active] = State.Failed(e.message ?: e.javaClass.simpleName)
+                        states[active] = State.Failed(message)
                     }
                 }
             }
@@ -407,6 +422,7 @@ class HybridSignInActivity : FragmentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         pending?.complete(Decision.Denied)
+        transport?.cancel() // ends the worker's wait for the computer at once
         bleAdvertiser?.stop()
         analysisExecutor.shutdown()
         scanner.close()
@@ -549,7 +565,7 @@ class HybridSignInActivity : FragmentActivity() {
             land.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
         }
         val accent = MaterialTheme.colorScheme.primaryContainer
-        val ink = MaterialTheme.colorScheme.primary
+        val yellow = Color(0xFFF2B705)
         val gold = Color(0xFFFFD35C)
         val green = Color(0xFF1E9E5A)
         val red = Color(0xFFC62828)
@@ -558,7 +574,7 @@ class HybridSignInActivity : FragmentActivity() {
             AnnotatedString(word),
             TextStyle(fontSize = 44.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp, color = colour),
         )
-        val verifyingText = remember(textMeasurer, ink) { measure("VERIFYING", ink) }
+        val verifyingText = remember(textMeasurer) { measure("VERIFYING", yellow) }
         val approvedText = remember(textMeasurer) { measure("APPROVED", green) }
         val deniedText = remember(textMeasurer) { measure("DENIED", red) }
         val sparkles = remember(f) {
@@ -613,7 +629,7 @@ class HybridSignInActivity : FragmentActivity() {
                             style = Stroke((10f * (1f - l) + 1f).dp.toPx()),
                         )
                         // the VERIFYING stamp blows away
-                        stamp(verifyingText, ink, 1f + 0.6f * l, (1f - l) * (1f - l))
+                        stamp(verifyingText, yellow, 1f + 0.6f * l, (1f - l) * (1f - l))
                     }
                     // the verdict slams down; DENIED also shakes
                     val shake = if (verdict == Verdict.Denied) sin(l * PI.toFloat() * 7f) * (1f - l) * 14.dp.toPx() else 0f
@@ -660,7 +676,7 @@ class HybridSignInActivity : FragmentActivity() {
 
                 // the pulsing VERIFYING stamp, on top of the shimmer
                 val beat = 0.5f + 0.5f * sin(time * 2f * PI.toFloat() / 1.1f)
-                stamp(verifyingText, ink, 0.97f + 0.06f * beat, 0.55f + 0.45f * beat)
+                stamp(verifyingText, yellow, 0.97f + 0.06f * beat, 0.55f + 0.45f * beat)
             }
         }
     }

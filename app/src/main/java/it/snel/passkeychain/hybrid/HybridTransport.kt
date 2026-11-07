@@ -22,8 +22,17 @@ class HybridTransport(
         data object Broadcasting : Progress
     }
 
-    class DeviceStageMissing(stage: String) :
-        UnsupportedOperationException("hybrid stage '$stage' needs on-device BLE/network and is not wired in this build")
+    /** A sign-in that failed for a reason the user can understand; [message] is shown on screen. */
+    class SignInFailure(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+    @Volatile private var openTunnel: TunnelClient.NewTunnel? = null
+    @Volatile private var cancelled = false
+
+    /** Stops a running [authenticate] (the user closed the screen): closes the tunnel, ending any wait. */
+    fun cancel() {
+        cancelled = true
+        openTunnel?.close()
+    }
 
     interface BleAdvertiser {
         fun advertise(serviceUuid: UUID, payload: ByteArray)
@@ -46,6 +55,8 @@ class HybridTransport(
              * advertised EID. The handshake runs on the first receive().
              */
             fun open(peerIdentity65: ByteArray, psk: ByteArray): Channel
+            /** Closes the WebSocket; a receive() waiting on it fails at once. Safe to call twice. */
+            fun close()
         }
         interface Channel {
             fun send(plaintext: ByteArray)
@@ -106,6 +117,11 @@ class HybridTransport(
         val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
         progress(Progress.TunnelOpening(java.net.URI(newTunnelUrl).host))
         val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
+        openTunnel = newTunnel
+        if (cancelled) {
+            newTunnel.close()
+            throw SignInFailure("Cancelled.")
+        }
         progress(Progress.TunnelOpen)
 
         // 2. The EID plaintext, and from exactly those bytes the Noise PSK.
@@ -115,20 +131,25 @@ class HybridTransport(
         it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: psk          = " + psk.joinToString("") { "%02x".format(it) })
         it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: peerIdentity = " + peer65.joinToString("") { "%02x".format(it) })
 
-        // 3. Advertise the encrypted EID: proof to the browser that this phone is nearby.
-        ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), encryptEid(aesKey, hmacKey, eidPlaintext))
-        progress(Progress.Broadcasting)
-
         try {
-            // 4. Noise handshake (on the first receive), then one CTAP2 request and its answer.
+            // 3. Advertise the encrypted EID: proof to the browser that this phone is nearby.
+            ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), encryptEid(aesKey, hmacKey, eidPlaintext))
+            progress(Progress.Broadcasting)
+
+            // 4. Noise handshake (on the first receive), then CTAP2 requests until
+            //    the getAssertion has been answered (signed, refused or no passkey).
+            //    A makeCredential probe or a getInfo before it is answered too.
             val channel = newTunnel.open(peer65, psk)
-            val request = channel.receive()
-            val response = CtapAuthenticator.handle(request, chooser)
-            channel.send(response)
-            channel.close()
-            return response
+            while (true) {
+                val request = channel.receive()
+                val response = CtapAuthenticator.handle(request, chooser)
+                channel.send(response)
+                if ((request[0].toInt() and 0xFF) == CtapAuthenticator.CMD_GET_ASSERTION) return response
+            }
         } finally {
             ble.stop()
+            newTunnel.close()
+            openTunnel = null
         }
     }
 

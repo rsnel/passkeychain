@@ -1,5 +1,6 @@
 package it.snel.passkeychain.hybrid
 
+import it.snel.passkeychain.hybrid.HybridTransport.SignInFailure
 import it.snel.passkeychain.util.Dbg
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,16 +27,25 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
 
     private val TAG = "NoiseTunnelClient"
 
+    /** What the WebSocket delivers to the worker thread. */
+    private sealed interface Event {
+        class Data(val bytes: ByteArray) : Event
+        /** the other side or the server closed the connection */
+        class Closed(val code: Int, val reason: String) : Event
+        /** the connection broke (network error), or we closed it ourselves */
+        class Broken(val cause: Throwable?) : Event
+    }
+
     override fun connectNewTunnel(tunnelUrl: String): HybridTransport.TunnelClient.NewTunnel {
         Dbg.d(TAG, "Connecting to $tunnelUrl")
+        val host = java.net.URI(tunnelUrl).host
         val client = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .build()
 
-        val incoming = LinkedBlockingQueue<ByteArray>()
-        val ready = LinkedBlockingQueue<Boolean>()
-        val headersRef = java.util.concurrent.atomic.AtomicReference<okhttp3.Headers>()
+        val incoming = LinkedBlockingQueue<Event>()
+        val opened = LinkedBlockingQueue<Result<Response>>()
 
         val ws = client.newWebSocket(
             Request.Builder()
@@ -46,47 +56,65 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     Dbg.d(TAG, "WebSocket open, headers:")
                     response.headers.forEach { (n, v) -> Dbg.d(TAG, "  $n: $v") }
-                    headersRef.set(response.headers)
-                    ready.offer(true)
+                    opened.offer(Result.success(response))
                 }
                 override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
                     val arr = bytes.toByteArray()
                     Dbg.d(TAG, "WS recv ${arr.size} bytes: ${hex(arr)}")
-                    incoming.offer(arr)
+                    incoming.offer(Event.Data(arr))
                 }
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    Dbg.e(TAG, "WebSocket failure: ${t.message}", t)
-                    response?.headers?.forEach { (n, v) -> Dbg.e(TAG, "  resp $n: $v") }
-                    ready.offer(false)
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    Dbg.d(TAG, "WS closing: $code $reason")
+                    incoming.offer(Event.Closed(code, reason))
+                    webSocket.close(1000, null)
                 }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     Dbg.d(TAG, "WS closed: $code $reason")
+                    incoming.offer(Event.Closed(code, reason))
+                }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Dbg.e(TAG, "WebSocket failure: ${t.message} (HTTP ${response?.code})", t)
+                    response?.headers?.forEach { (n, v) -> Dbg.e(TAG, "  resp $n: $v") }
+                    val failure = if (response != null) {
+                        SignInFailure("The tunnel server $host refused the connection (HTTP ${response.code}). Try again later.", t)
+                    } else {
+                        SignInFailure("Could not reach the tunnel server $host. Check the phone's internet connection.", t)
+                    }
+                    opened.offer(Result.failure(failure))
+                    incoming.offer(Event.Broken(t))
                 }
             }
         )
 
-        val opened = ready.poll(15, TimeUnit.SECONDS) ?: false
-        if (!opened) throw HybridTransport.DeviceStageMissing("WebSocket did not open")
-
-        val headers = headersRef.get() ?: throw HybridTransport.DeviceStageMissing("no response headers")
-        val shardHeader = headers["X-Cable-Routing-Id"]
-            ?: headers["X-caBLE-Shard"]
-            ?: throw HybridTransport.DeviceStageMissing("routing header missing")
-        Dbg.d(TAG, "routing header = $shardHeader")
-        val routingId = hexToBytes(shardHeader.replace("-", ""))
-        require(routingId.size == 3) { "routing ID must be 3 bytes, got ${routingId.size}" }
+        val response = opened.poll(20, TimeUnit.SECONDS)?.getOrThrow() ?: run {
+            ws.cancel()
+            throw SignInFailure("The tunnel server $host did not answer. Check the phone's internet connection.")
+        }
+        val routingHeader = response.headers["X-Cable-Routing-Id"] ?: response.headers["X-caBLE-Shard"]
+        val routingId = routingHeader?.replace("-", "")?.let(::hexToBytes)
+        Dbg.d(TAG, "routing header = $routingHeader")
+        if (routingId == null || routingId.size != 3) {
+            ws.cancel()
+            throw SignInFailure("The tunnel server $host gave an unexpected answer (no routing ID).")
+        }
 
         // The PSK depends on the advert, which needs this routing ID first,
         // so the Noise channel is opened later, by HybridTransport.
         return object : HybridTransport.TunnelClient.NewTunnel {
             override val routingId: ByteArray = routingId
             override fun open(peerIdentity65: ByteArray, psk: ByteArray): HybridTransport.TunnelClient.Channel =
-                NoiseResponderChannel(ws, incoming, NoiseHandshake(peerIdentity65, psk, log = { Dbg.d(TAG, it) }))
+                NoiseResponderChannel(ws, incoming, NoiseHandshake(peerIdentity65, psk, log = { Dbg.d(TAG, it) }), this::close)
+            override fun close() {
+                // wake a waiting worker first: closing may also report a failure
+                incoming.offer(Event.Broken(null))
+                if (!ws.close(1000, null)) ws.cancel()
+                client.dispatcher.executorService.shutdown()
+            }
         }
     }
 
-    private fun hexToBytes(s: String): ByteArray {
-        require(s.length % 2 == 0)
+    private fun hexToBytes(s: String): ByteArray? {
+        if (s.length % 2 != 0 || !s.all { Character.digit(it, 16) >= 0 }) return null
         return ByteArray(s.length / 2) { i ->
             ((Character.digit(s[i * 2], 16) shl 4) or Character.digit(s[i * 2 + 1], 16)).toByte()
         }
@@ -101,23 +129,48 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
      */
     private inner class NoiseResponderChannel(
         private val ws: WebSocket,
-        private val incoming: LinkedBlockingQueue<ByteArray>,
+        private val incoming: LinkedBlockingQueue<Event>,
         private val handshake: NoiseHandshake,
+        private val closeTunnel: () -> Unit,
     ) : HybridTransport.TunnelClient.Channel {
 
         private var crypter: NoiseCrypter? = null
 
+        /**
+         * The next message, or a [SignInFailure] saying why there is none:
+         * [timeoutMessage] after [seconds], or the connection ended.
+         */
+        private fun next(seconds: Long, timeoutMessage: String): ByteArray {
+            val event = incoming.poll(seconds, TimeUnit.SECONDS)
+                ?: throw SignInFailure(timeoutMessage)
+            return when (event) {
+                is Event.Data -> event.bytes
+                is Event.Closed -> throw SignInFailure(
+                    if (crypter == null) "The connection closed before the computer connected. Scan a fresh QR code."
+                    else "The computer ended the sign-in.",
+                )
+                is Event.Broken -> {
+                    incoming.offer(event) // later waits end at once too
+                    throw SignInFailure(
+                        if (event.cause == null) "Cancelled."
+                        else "The connection to the tunnel server was lost. Check the phone's internet connection.",
+                        event.cause,
+                    )
+                }
+            }
+        }
+
         override fun receive(): ByteArray {
             val crypter = crypter ?: handshake().also { crypter = it; onHandshakeDone() }
             while (true) {
-                Dbg.d(TAG, "receive(): waiting up to 120s for transport ciphertext from Chrome")
-                val ciphertext = incoming.poll(120, TimeUnit.SECONDS)
-                    ?: run {
-                        Dbg.w(TAG, "receive(): timeout, no transport ciphertext from Chrome after post-handshake")
-                        throw HybridTransport.DeviceStageMissing("timeout waiting for transport ciphertext")
-                    }
+                Dbg.d(TAG, "receive(): waiting for a request from the computer")
+                val ciphertext = next(REQUEST_TIMEOUT, "The computer stopped responding. Scan a fresh QR code to try again.")
                 Dbg.d(TAG, "receive(): got transport ciphertext ${ciphertext.size} bytes: ${hex(ciphertext)}")
-                val pt = crypter.decrypt(ciphertext)
+                val pt = try {
+                    crypter.decrypt(ciphertext)
+                } catch (e: Exception) {
+                    throw SignInFailure("Could not read the computer's message. Scan a fresh QR code to try again.", e)
+                }
                 Dbg.d(TAG, "receive(): decrypted ${pt.size} bytes: ${hex(pt)}")
                 if (pt.isEmpty()) {
                     Dbg.w(TAG, "receive(): empty plaintext, continuing")
@@ -131,7 +184,7 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
                 // kShutdown: 1-byte message 0x02 (MessageType::kShutdown)
                 if (pt.size == 1 && first == 0x02) {
                     Dbg.w(TAG, "receive(): kShutdown from Chrome")
-                    throw HybridTransport.DeviceStageMissing("Chrome requested shutdown")
+                    throw SignInFailure("The sign-in was cancelled on the computer.")
                 }
                 // kUpdate: 1-byte message 0x03
                 if (pt.size == 1 && first == 0x03) {
@@ -173,18 +226,25 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             // 'Trailing data bytes are not allowed' from Chrome's CTAP2 parser.
             val ct = crypter.encrypt(plaintext)
             Dbg.d(TAG, "transport send ${ct.size} bytes (plaintext ${plaintext.size}): ${hex(ct)}")
-            ws.send(okio.ByteString.of(*ct))
+            if (!ws.send(okio.ByteString.of(*ct))) throw SignInFailure("The connection to the computer was lost before the answer could be sent.")
         }
 
-        override fun close() {
-            ws.close(1000, "done")
-        }
+        override fun close() = closeTunnel()
 
         /** msg1 in, msg2 out, then the post-handshake message; returns the transport crypter. */
         private fun handshake(): NoiseCrypter {
-            val msg1 = incoming.poll(120, TimeUnit.SECONDS)
-                ?: throw HybridTransport.DeviceStageMissing("timeout waiting for msg1")
-            val result = handshake.respond(msg1)
+            // Nothing arrives until the computer has seen the Bluetooth broadcast.
+            val msg1 = next(
+                MSG1_TIMEOUT,
+                "Your computer did not connect. Move the phone close to the computer, check that Bluetooth " +
+                    "is on on the computer, and scan a fresh QR code.",
+            )
+            val result = try {
+                handshake.respond(msg1)
+            } catch (e: NoiseHandshake.Failed) {
+                Dbg.w(TAG, "handshake failed: ${e.message}")
+                throw SignInFailure("The computer's answer did not match this QR code. Scan the QR code again.", e)
+            }
             ws.send(okio.ByteString.of(*result.msg2))
             val crypter = NoiseCrypter(receiveKey = result.receiveKey, sendKey = result.sendKey)
 
@@ -200,5 +260,12 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             ws.send(okio.ByteString.of(*ct))
             return crypter
         }
+    }
+
+    private companion object {
+        /** how long the computer gets to find the Bluetooth broadcast and connect */
+        const val MSG1_TIMEOUT = 90L
+        /** how long the computer gets to send its request after the handshake */
+        const val REQUEST_TIMEOUT = 60L
     }
 }
