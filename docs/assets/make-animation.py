@@ -129,6 +129,87 @@ def label_centre(s):
     m = re.search(r"<rect x='([-\d.]+)' y='([-\d.]+)' width='([-\d.]+)' height='([-\d.]+)'", s)
     return float(m.group(1)) + float(m.group(3)) / 2, float(m.group(2)) + float(m.group(4)) / 2
 
+# ---- the screens: the computer shows what the browser shows, the phone runs PassKeyChain ----
+GREY, YELLOW_, GREEN_ = '#C7C5D0', '#F2B705', '#1E9E5A'
+
+def arrival8():
+    """when the signature arrives at the computer (the end of token 8's trip)"""
+    return WIN[8][0] + 2.2
+
+def between(a, b, fade=.25):
+    """visible from a to b (seconds), invisible otherwise"""
+    if a <= 0:
+        return (f"<animate attributeName='opacity' values='1;1;0;0' keyTimes='0;{f(b-fade)};{f(b)};1' "
+                f"dur='{T}s' repeatCount='indefinite'/>")
+    return (f"<animate attributeName='opacity' values='0;0;1;1;0;0' keyTimes='0;{f(a)};{f(a+fade)};{f(b-fade)};{f(b)};1' "
+            f"dur='{T}s' repeatCount='indefinite'/>")
+
+def computer_screen(qr_line):
+    """steps 1-3 the QR, 4-6 connecting, 7 approve on the phone, 8 access granted (when the 8 arrives)"""
+    s4, s7 = WIN[4][0], WIN[7][0]
+    a8 = arrival8()
+    T_ = lambda x, y, t, size=10, col='#2D2F45', w=800: (f"<text x='{x}' y='{y}' text-anchor='middle' {FONT} "
+                                                         f"font-size='{size}' font-weight='{w}' fill='{col}'>{t}</text>")
+    bg = "<rect x='220' y='304' width='102' height='78' rx='5' fill='#EEF0FF'/>"
+    out = []
+    # the QR, back again when the loop restarts
+    out.append(f"<g><animate attributeName='opacity' values='1;1;0;0;1;1' keyTimes='0;{f(s4-.1)};{f(s4+.15)};{f(END)};{f(END+.2)};1' "
+               f"dur='{T}s' repeatCount='indefinite'/>{qr_line}</g>")
+    # connecting to your phone
+    out.append(f"<g opacity='0'>{between(s4, s7)}{bg}"
+               "<rect x='263' y='313' width='16' height='27' rx='3.5' fill='none' stroke='#4A52B8' stroke-width='2.4'/>"
+               "<g fill='#4A52B8'>" + ''.join(
+                   f"<circle cx='{259 + j*8}' cy='326.5' r='1.8'><animate attributeName='opacity' values='.2;1;.2' "
+                   f"dur='1s' begin='{j*.33:.2f}s' repeatCount='indefinite'/></circle>" for j in (-1, 3)) + "</g>"
+               + T_(271, 357, 'Connecting to') + T_(271, 370, 'your phone…') + "</g>")
+    # approve on your phone
+    out.append(f"<g opacity='0'>{between(s7, a8)}{bg}"
+               f"<circle cx='271' cy='328' r='13' fill='{STEP[7]}'/>"
+               "<g transform='translate(271 326)' stroke='#1B1B21' stroke-width='1.8' fill='none' stroke-linecap='round'>"
+               "<path d='M-3,4 a3,3 0 0 1 6,0'/><path d='M-6,4 a6,6 0 0 1 12,0'/><path d='M-9,4 a9,9 0 0 1 18,0'/>"
+               "<path d='M0,4 v6'/></g>"
+               + T_(271, 357, 'Approve on') + T_(271, 370, 'your phone') + "</g>")
+    # access granted
+    out.append(f"<g opacity='0'>{between(a8, END)}{bg}"
+               f"<circle cx='271' cy='328' r='13' fill='{GREEN_}'/>"
+               "<path d='M264.5,328.5 l4.5,4.5 l8.5,-9' stroke='#fff' stroke-width='2.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/>"
+               + T_(271, 357, 'Access', col=GREEN_) + T_(271, 370, 'granted', col=GREEN_) + "</g>")
+    return ''.join(out)
+
+def phone_screen():
+    """PassKeyChain on the phone: the scanned QR above, the eight steps below, live"""
+    a8 = arrival8()
+    o = ["<g transform='rotate(-10 712 300)'>",
+         "<rect x='684' y='250' width='56' height='102' rx='11' fill='#2D2F45'/>",
+         "<rect x='689' y='258' width='46' height='86' rx='6' fill='#F7F5FF'/>",
+         "<path d='M695,258 h34 a6,6 0 0 1 6,6 v34 h-46 v-34 a6,6 0 0 1 6,-6 Z' fill='#3B3F4A'/>",     # the camera picture
+         "<rect x='702' y='268' width='20' height='20' rx='1.5' fill='#fff'/>"]
+    q = "<g fill='#1B1B21'>"
+    for fx, fy in ((703.5, 269.5), (715.5, 269.5), (703.5, 281.5)):                               # finder patterns
+        q += f"<rect x='{fx}' y='{fy}' width='5' height='5'/><rect x='{fx+1}' y='{fy+1}' width='3' height='3' fill='#fff'/><rect x='{fx+1.8}' y='{fy+1.8}' width='1.4' height='1.4'/>"
+    for mx, my in ((710.5, 270), (712, 273), (710.5, 276.5), (713.5, 278), (716, 282), (719, 283.5), (711, 283), (717.5, 277), (720, 280)):
+        q += f"<rect x='{mx}' y='{my}' width='1.6' height='1.6'/>"
+    o.append(q + "</g>")
+    # the stamp's frame around the QR: yellow while verifying, green when approved
+    o.append(f"<rect x='700' y='266' width='24' height='24' rx='3' fill='none' stroke='{YELLOW_}' stroke-width='1.8' opacity='0'>"
+             f"{between(WIN[2][0], a8, .1)}</rect>")
+    o.append(f"<rect x='700' y='266' width='24' height='24' rx='3' fill='none' stroke='{GREEN_}' stroke-width='1.8' opacity='0'>"
+             f"{between(a8, END, .1)}</rect>")
+    # the checklist: grey, yellow while busy, green when done
+    for i in range(1, 9):
+        y = 303 + (i-1)*5.1
+        s0, e0 = WIN[i]
+        if i == 8: e0 = a8
+        if s0 > 0:
+            vals, kts = f"{GREY};{YELLOW_};{GREEN_};{GREY}", f"0;{f(s0)};{f(e0)};{f(END)}"
+        else:
+            vals, kts = f"{YELLOW_};{GREEN_};{GREY}", f"0;{f(e0)};{f(END)}"
+        o.append(f"<circle cx='694' cy='{y:.1f}' r='1.7' fill='{GREY}'>"
+                 f"<animate attributeName='fill' values='{vals}' keyTimes='{kts}' calcMode='discrete' dur='{T}s' repeatCount='indefinite'/></circle>"
+                 f"<rect x='698' y='{y-0.7:.1f}' width='{26 - (i % 3) * 5}' height='1.4' rx='.7' fill='#9A98A8'/>")
+    o.append("</g>")
+    return ''.join(o)
+
 def build_scene(k=1.0):
     """the illustration with its animations; labels scaled by k around their own centres"""
     def lab(*ns, kk=None, dx=0, dy=0):
@@ -144,7 +225,11 @@ def build_scene(k=1.0):
     o.append(line(21))                             # <g transform='translate(0 90)'>
     o.append(wrap(1, line(22) + line(23)))         # QR beam
     o.append(wrap(3, ''.join(line(n) for n in range(24, 29))))  # Bluetooth arcs
-    o += [line(n) for n in range(29, 53)]          # people, computer, phone
+    o += [line(n) for n in range(29, 33)]          # desk, person, the laptop
+    o.append(computer_screen(line(33)))            # what the browser shows
+    o += [line(n) for n in range(34, 51)]          # people
+    o.append(phone_screen())                       # PassKeyChain on the phone (replaces line 51)
+    o.append(line(52))                             # the fingers holding it
     o.append(wrap(1, lab(53, 54)))                 # "QR code" label and badge
     o.append(wrap(3, lab(55, 56)))                 # "Bluetooth" label and badge
     o += [lab(57), lab(58), line(59)]              # Browser, PassKeyChain, </g>
