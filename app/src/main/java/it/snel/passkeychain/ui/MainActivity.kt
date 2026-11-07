@@ -86,6 +86,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -768,7 +770,9 @@ private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onC
 private fun PasskeySheet(pk: Passkey, lastUsed: Long?, onDismiss: () -> Unit, onCopied: () -> Unit, onDelete: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+        // scrolls when it doesn't fit (large fonts): otherwise the last rows, the
+        // delete button first, get squeezed
+        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 SiteAvatar(pk, 64.dp)
                 Spacer(Modifier.height(12.dp))
