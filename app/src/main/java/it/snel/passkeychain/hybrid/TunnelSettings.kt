@@ -10,11 +10,17 @@ class TunnelSettings(context: Context) {
         get() = prefs.getInt("first", TunnelDomains.GOOGLE).takeIf { TunnelDomains.hostname(it) != null } ?: TunnelDomains.GOOGLE
         set(value) { prefs.edit().putInt("first", value).apply() }
 
+    /** Unless chosen otherwise: Google's server as fallback for any other first choice. */
     var second: Int
-        get() = prefs.getInt("second", TunnelDomains.NONE).takeIf { it == TunnelDomains.NONE || TunnelDomains.hostname(it) != null }
-            ?: TunnelDomains.NONE
+        get() = prefs.getInt("second", defaultSecond(first)).takeIf { it == TunnelDomains.NONE || TunnelDomains.hostname(it) != null }
+            ?: defaultSecond(first)
         set(value) { prefs.edit().putInt("second", value).apply() }
 
     /** The servers to try, in order. */
     fun order(): List<Int> = listOf(first, second).filter { it != TunnelDomains.NONE }.distinct()
+
+    companion object {
+        /** The sensible fallback for [first]: Google's server, which every browser knows, unless that is the first choice. */
+        fun defaultSecond(first: Int) = if (first == TunnelDomains.GOOGLE) TunnelDomains.NONE else TunnelDomains.GOOGLE
+    }
 }

@@ -89,7 +89,14 @@ fun TunnelServerDialog(settings: TunnelSettings, onDismiss: () -> Unit) {
 
     if (picking != 0) TunnelPicker(
         allowNone = picking == 2,
-        onPick = { n -> if (picking == 1) first = n else second = n; picking = 0 },
+        onPick = { n ->
+            if (picking == 1) {
+                first = n
+                // keep a fallback: Google's server, unless one is chosen already
+                if (second == TunnelDomains.NONE || second == n) second = TunnelSettings.defaultSecond(n)
+            } else second = n
+            picking = 0
+        },
         onDismiss = { picking = 0 },
     )
 }
