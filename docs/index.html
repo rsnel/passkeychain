@@ -210,7 +210,7 @@
     <p class="sub">When a website asks your computer for a passkey that lives on your phone, the computer shows a QR code. You scan it, and a few seconds later you are signed in on the computer, without the private key ever leaving your phone. This is what happens in between.</p>
 
     <figure class="flow-figure">
-      <img src="assets/qr-signin.svg" alt="The browser on a computer, the passkey app on a phone, and a tunnel server on the internet. They are connected by three channels: the QR code from computer to phone, Bluetooth from phone to computer, and an encrypted tunnel through the tunnel server." width="1000" height="610" loading="lazy">
+      <img src="assets/qr-signin.svg" alt="The browser on a computer, the passkey app on a phone, and a tunnel server on the internet, connected by the QR code (step 1), an encrypted tunnel (step 2) and Bluetooth (step 3). Through the tunnel the browser sends Hello (step 4) and Sign this? (step 6); the phone sends Hello back (step 5) and, after a fingerprint unlock, the signature (step 7), after which the browser is signed in." width="1000" height="750" loading="lazy">
     </figure>
 
     <div class="legend">
