@@ -5,12 +5,19 @@ This document records everything needed to implement a working caBLE v2
 authenticator (phone side, responder) that interoperates with Chrome on the
 desktop as the initiator. It was derived from Chromium source
 (device/fido/cable/*, especially v2_handshake.cc, noise.cc,
-v2_authenticator.cc, fido_tunnel_device.cc), from live logs of a working
-implementation, and from offline verification of the cryptographic steps.
+v2_authenticator.cc, fido_tunnel_device.cc), from the Noise Protocol
+Framework specification, from CTAP 2.1 and WebAuthn Level 3, from live logs
+of a working implementation (PassKeyChain, hybrid/*.kt), and from offline
+verification of the cryptographic steps.
 
-Every value below has been observed to work against Chrome. Where the
-protocol has quirks that are not in the FIDO specification, they are called
-out explicitly.
+How sure each statement is, is marked where it matters:
+
+  [verified]   observed to work against Chrome with a real sign-in, or
+               cross-checked offline against values Chrome produced
+  [spec]       from the Noise, CTAP 2.1 or WebAuthn specification
+  [chromium]   read from Chromium source, not separately observed
+  [unverified] plausible, but the runs so far cannot tell (for example
+               because the value involved was always 0)
 
 Contents
 --------
@@ -28,8 +35,9 @@ Contents
 12.  MessageType byte
 13.  Canonical CBOR ordering
 14.  Quirks and gotchas
-15.  Debugging checklist
-16.  Reference: v2_constants.h values
+15.  Security requirements
+16.  Debugging checklist
+17.  Reference: constants
 
 ======================================================
 1. ROLES AND OVERALL FLOW
@@ -46,55 +54,78 @@ Flow:
      X-Cable-Routing-Id.
   e. Phone builds an EID (encrypted BLE advertisement) with that routing ID,
      encrypts it, and advertises it over BLE on service UUID 0xFFF9.
-  f. Chrome scans BLE, decrypts the EID, learns the routing ID and tunnelId,
-     and connects to /cable/connect/<routingId>/<tunnelId>.
+  f. Chrome scans BLE and finds an advert that decrypts and authenticates
+     under the EID key from its own QR secret. That proves a phone holding
+     the QR secret is physically nearby, and gives Chrome the routing ID.
+     (Chrome already knows the tunnelId: it derives it from the QR secret
+     just like the phone.) Chrome connects to
+     /cable/connect/<routingId>/<tunnelId>.
   g. The tunnel server pairs the two WebSocket connections.
   h. Chrome sends Noise handshake message 1 (msg1).
-  i. Phone decrypts msg1, builds msg2, sends it.
+  i. Phone decrypts msg1, builds msg2, sends it. The phone can stop
+     advertising now.
   j. Chrome accepts msg2, derives transport keys.
   k. Phone sends the post-handshake message (features + getInfo).
   l. Chrome accepts the post-handshake message.
-  m. Chrome sends a CTAP2 getAssertion or makeCredential.
-  n. Phone signs and returns the CTAP2 response.
-  o. Chrome closes the tunnel; the RP verifies the assertion.
+  m. Chrome sends a CTAP2 getAssertion (or makeCredential).
+  n. Phone asks the user, signs and returns the CTAP2 response.
+  o. The tunnel is closed; the RP verifies the assertion.
 
 The phone must connect to /cable/new/ BEFORE advertising BLE, because the
 routing ID in the EID comes from the tunnel server's response headers and
-Chrome will not connect to /cable/connect/ until it sees the EID.
+Chrome will not connect to /cable/connect/ until it sees the EID. [verified]
 
 ======================================================
 2. QR CODE CONTENTS
 ======================================================
 
 The QR is a "FIDO:/" string followed by decimal digits. The digits decode
-to a CBOR map with these keys:
+to a CBOR map with these keys: [verified for 0-5]
 
   0: compressed P-256 public key (33 bytes, prefix 0x02 or 0x03)
   1: QR secret (16 bytes)
   2: number of known tunnel server domains (integer)
   3: current unix time (integer, seconds)
-  4: supports linking / state-assisted (boolean)
+  4: whether the desktop supports state-assisted transactions (linking)
+     (boolean). NOTE: a CBOR boolean is major type 7; a decoder without
+     major type 7 fails here.
   5: request hint: "ga" (getAssertion) or "mc" (makeCredential)
 
 The public key in field 0 is the DESKTOP's static public key, not the
 phone's. The QR secret in field 1 is the input to all key derivation.
 
-Digit encoding: chunks of 7 bytes are encoded as 17 decimal digits,
-little-endian. The chunk widths are {3,5,8,10,13,15,17} digits for
-{1,2,3,4,5,6,7} bytes.
+Digit encoding: the byte string is cut into chunks of 7 bytes; each chunk is
+read as a little-endian integer and written as exactly 17 decimal digits. A
+final partial chunk of {1,2,3,4,5,6} bytes is written as {3,5,8,10,13,15}
+digits. [verified]
+
+An "mc" hint means the site wants to CREATE a passkey. An authenticator that
+only holds imported passkeys cannot do that and should say so right after
+the scan, instead of after the whole exchange.
 
 ======================================================
 3. KEY DERIVATION FROM THE QR SECRET
 ======================================================
 
-All derivations use HKDF-SHA256 with an EMPTY salt unless noted. "info" is a
-4-byte LITTLE-ENDIAN integer label.
+All derivations use HKDF-SHA256 with an EMPTY salt unless noted (HKDF
+treats an empty salt as 32 zero bytes). "info" is a 4-byte LITTLE-ENDIAN
+integer label, Chromium's DerivedValueType: [chromium]
+
+  1  EID key           used here
+  2  tunnel ID         used here
+  3  PSK               used here
+  4  paired secret     state-assisted (linked) flow only
+  5  identity-key seed state-assisted flow only
+  6  per-contact-ID secret  state-assisted flow only
+
+Only 1, 2 and 3 are needed for the QR flow. In particular the phone has NO
+static key of its own in this flow; do not derive one.
 
   QR secret = the 16 bytes from QR field 1.
 
   EID AES key and EID HMAC key:
     material = HKDF(ikm=QRsecret, salt=empty, info=[1,0,0,0], len=64)
-    aesKey   = material[0..32]
+    aesKey   = material[0..32]          (32 bytes: AES-256)
     hmacKey  = material[32..64]
 
   tunnelId (used in the tunnel server URL):
@@ -107,10 +138,10 @@ All derivations use HKDF-SHA256 with an EMPTY salt unless noted. "info" is a
 
 The tunnelId derivation is confirmed correct: it matches the tunnelId Chrome
 prints in its own /cable/connect/<routing>/<tunnelId> URL, character for
-character, for the same QR.
+character, for the same QR. [verified]
 
-The psk derivation is confirmed correct by offline HKDF computation against
-the value the app logs and uses.
+The psk derivation is confirmed correct: msg1 from Chrome decrypts with it,
+and an offline HKDF computation gives the same value. [verified]
 
 ======================================================
 4. TUNNEL SERVER WEBSOCKET SETUP
@@ -122,16 +153,17 @@ URL for Chrome:    wss://cable.ua5v.com/cable/connect/<hex(routingId)>/<hex(tunn
 The tunnelId is lowercase hex, no dashes. The routingId is the 3-byte value
 the server assigns (also lowercase hex, 6 characters).
 
-WebSocket upgrade:
+WebSocket upgrade: [verified]
 
   - Send header Sec-WebSocket-Protocol: fido.cable
     WITHOUT THIS the server returns "400 Bad Request".
   - The successful response contains a header X-Cable-Routing-Id with the
-    3-byte routing ID (hex).
+    3-byte routing ID in hex. HTTP header names are case-insensitive;
+    PassKeyChain also accepts the older name X-caBLE-Shard.
 
 IMPORTANT: the phone and Chrome connect to DIFFERENT paths. The phone uses
 /cable/new/, Chrome uses /cable/connect/. Using /cable/connect/ from the
-phone returns a WebSocket that never gets paired.
+phone returns a WebSocket that never gets paired. [verified]
 
 The routing ID is NOT used in the phone's own /cable/new/ URL. It is only
 used (a) in the EID plaintext, and (b) by Chrome in its /cable/connect/ URL.
@@ -145,31 +177,33 @@ Service UUID: 0000FFF9-0000-1000-8000-00805F9B34FB
 The EID plaintext is 16 bytes:
 
   byte 0:      0x00
-  bytes 1-10:  10-byte nonce (kNonceSize = 10)
+  bytes 1-10:  10 fresh random bytes (kNonceSize = 10), new for every
+               sign-in
   bytes 11-13: 3-byte routing ID from X-Cable-Routing-Id
-  bytes 14-15: 2-byte tunnel server domain, BIG-ENDIAN (0 for cable.ua5v.com)
+  bytes 14-15: 2-byte tunnel server domain; 0 for cable.ua5v.com
+               [unverified: the byte order. Earlier notes said big-endian,
+               but with the value 0 no run can tell; check Chromium's
+               eid::FromComponents before using another domain]
 
-The 20-byte BLE payload:
+The 20-byte BLE payload: [verified]
 
-  ciphertext = AES-128-ECB-encrypt(eidPlaintext, aesKey)   (16 bytes)
-  tag        = HMAC-SHA256(ciphertext, hmacKey)[0..4]      (4 bytes)
+  ciphertext = AES-256-ECB(key = aesKey (all 32 bytes), plaintext = eidPlaintext)
+               one 16-byte block, no padding
+  tag        = HMAC-SHA256(key = hmacKey, message = ciphertext)[0..4]
   payload    = ciphertext || tag                           (20 bytes)
 
-The AES key is 32 bytes because the material is 64 bytes split in half; in
-practice only the first 16 bytes of aesKey are used by AES-128-ECB, and the
-remaining 16 bytes are ignored by the cipher but are still part of the key
-material derivation. (Some implementations use AES-256 on the 16-byte
-plaintext padded out; the working implementation uses AES-128 with the first
-16 bytes.)
+(An earlier version of these notes said AES-128 with the first 16 bytes of
+aesKey. That was wrong: the working implementation passes all 32 bytes to
+AES, which makes it AES-256, and Chrome accepts the advert.)
 
 Chrome decrypts this, validates the HMAC, and extracts the routing ID from
-the plaintext. The 10-byte nonce is not used in the handshake; it is used as
-part of the salt for the psk derivation, so it must be exactly the bytes
-Chrome decrypts from your advertisement.
+the plaintext.
 
-The plaintext you use for the psk derivation MUST be the same bytes you
-encrypt into the advertisement. If you build one and encrypt another, the
-psk will not match and msg1 will fail to decrypt.
+The random bytes 1-10 do not appear anywhere else in the protocol, but they
+are part of the PSK salt (section 3): the PSK is derived from the WHOLE
+plaintext. So the plaintext you use for the psk derivation MUST be exactly
+the bytes you encrypt into the advertisement. If you build one and encrypt
+another, the psk will not match and msg1 will fail to decrypt. [verified]
 
 ======================================================
 6. NOISE HANDSHAKE
@@ -177,39 +211,57 @@ psk will not match and msg1 will fail to decrypt.
 
 Protocol name: "Noise_KNpsk0_P256_AESGCM_SHA256"
 
-The pattern observed to work against Chrome for QR-initiated transactions is
-KNpsk0 with prologue 0x01. This is not the only pattern in Chromium's code;
-NKpsk0 with prologue 0x00 exists for state-assisted transactions. The
-desktop's QR-initiated flow uses KNpsk0.
+For QR-initiated sign-ins Chrome uses the KNpsk0 pattern with prologue 0x01.
+[verified] Chromium also has NKpsk0 with prologue 0x00, for state-assisted
+(linked) transactions; it does not work for the QR flow. [chromium]
 
-Chromium's BuildInitialMessage selects the pattern based on peer_identity_:
-  - peer_identity_ set, no local identity: NKpsk0, prologue 0x00
-  - no peer_identity_, local identity:   KNpsk0, prologue 0x01
+Chromium's initiator (HandshakeInitiator) selects the pattern from what it
+holds:
+  - a peer identity (a linked phone), no local identity: NKpsk0, prologue 0x00
+  - a local identity (its QR key pair), no peer identity: KNpsk0, prologue 0x01
 
-For the QR flow the desktop has a local identity (its own keypair whose
-public half is in the QR) and no peer_identity_, so it uses KNpsk0. The
-phone, as responder, mirrors this.
+In the QR flow the desktop has a local identity (the key pair whose public
+half is in the QR) and knows no phone key, so it uses KNpsk0. In Noise
+notation, with s = the desktop's static key known to both sides in advance:
+
+    -> s                 (pre-message: the QR key, mixed in at init)
+    ...
+    -> psk, e            msg1, from Chrome
+    <- e, ee, se         msg2, from the phone
+
+Two rules from the Noise specification explain steps that look odd: [spec]
+
+  - In any handshake with a PSK, every "e" token is processed as
+    MixHash(e.public) followed by MixKey(e.public) (Noise spec, section 9,
+    "Pre-shared symmetric keys"). This is standard Noise, not a Chromium
+    quirk.
+  - "se" in a responder's message means DH(initiator's static key,
+    responder's ephemeral key).
 
 Proceed as follows.
 
 --- INITIALISATION (responder) ---
 
-  ck = 32 zero bytes
-  ck[0..len(protocolName)] = protocolName   (31 bytes; one zero byte pad)
-  h = ck
+  h  = protocolName padded with zero bytes to 32 bytes
+       (the name is 31 bytes, so one zero byte)
+  ck = h
 
   MixHash([0x01])                 // prologue, single byte 0x01
-  MixHash(peerIdentity65)         // the QR's 65-byte uncompressed public key
+  MixHash(peerIdentity65)         // the QR's public key, uncompressed (pre-message s)
   MixKeyAndHash(psk)              // 32-byte psk
 
   peerIdentity65 is the decompression of the 33-byte QR public key to
   65-byte uncompressed P-256 (0x04 || X || Y). If the QR key starts with
   0x02 choose even Y, if 0x03 choose odd Y.
 
+  MixKeyAndHash(ikm): (ck, temp_h, temp_k) = HKDF(ikm, salt=ck, info=empty,
+  len=96) split in thirds; MixHash(temp_h); k = temp_k; nonce = 0.
+
 --- MSG1 (from Chrome, 81 bytes = e_pub 65 + tag 16) ---
 
+  Check that e_pub_i is a valid point on P-256; abort if not.
   MixHash(e_pub_i)                // 65 bytes, uncompressed P-256
-  MixKey(e_pub_i)                 // MixKey, not just MixHash
+  MixKey(e_pub_i)                 // psk rule: e is also mixed into the key
   plaintext = DecryptAndHash(tag1)   // must be empty
 
   If DecryptAndHash throws, the psk or the initial h/ck chain is wrong.
@@ -220,16 +272,15 @@ Proceed as follows.
 Generate a fresh P-256 ephemeral keypair ephR.
 
   MixHash(e_pub_r)                // 65 bytes, uncompressed P-256
-  MixKey(e_pub_r)                 // MixKey of the ephemeral point
+  MixKey(e_pub_r)                 // psk rule
   ee = ECDH(ephR_priv, e_pub_i)
   MixKey(ee)
-  se = ECDH(ephR_priv, peerIdentity65)   // ECDH against the QR's static key
-  MixKey(se)                             // present in KNpsk0, absent in NKpsk0
+  se = ECDH(ephR_priv, peerIdentity65)   // initiator static x responder ephemeral
+  MixKey(se)
   tag2 = EncryptAndHash(empty)           // 16-byte AEAD tag
   msg2 = e_pub_r || tag2
 
-The se step is the one most commonly missed. Chromium's RespondToHandshake
-for the KNpsk0 branch does, in order:
+Chromium's RespondToHandshake does, in order: [chromium, verified]
   MixHash(peer_point_bytes)
   MixKey(peer_point_bytes)
   MixKey(shared_key_ee)
@@ -237,7 +288,7 @@ for the KNpsk0 branch does, in order:
   EncryptAndHash({})
 
 Missing se makes msg2 fail with "Invalid caBLE handshake message" (the
-AEAD tag verifies against a different k than Chrome's).
+AEAD tag verifies against a different k than Chrome's). [verified]
 
 --- No further handshake messages ---
 
@@ -248,27 +299,19 @@ section 7) and the post-handshake message is sent (section 8).
 7. TRANSPORT KEYS
 ======================================================
 
-After msg2:
+After msg2, the standard Noise Split(): [spec, verified]
 
-  (first32, second32) = HKDF2(ck, empty)
-    where HKDF2(ck, ikm) = HKDF(ikm, salt=ck, info=empty, len=64),
-    split into two 32-byte halves.
+  (k1, k2) = HKDF(ikm=empty, salt=ck, info=empty, len=64), split in halves
 
-  read_key  = first32
-  write_key = second32
+  k1 encrypts initiator -> responder: the phone RECEIVES with k1
+  k2 encrypts responder -> initiator: the phone SENDS with k2
 
-Assign as follows:
-
-  phone's txKey (what it uses to encrypt messages to Chrome) = write_key
-  phone's rxKey (what it uses to decrypt messages from Chrome) = read_key
-
-The variable names "read_key" and "write_key" are from the responder's
-perspective in Chromium's Crypter (read_key_ decrypts, write_key_ encrypts).
-From the initiator's (Chrome's) perspective the roles are reversed, so
-Chrome's write_key equals the phone's read_key and vice versa.
+Chromium's Crypter calls them read_key and write_key from the phone's point
+of view, which is the same assignment.
 
 Getting this backwards produces "decryption failed for caBLE
 post-handshake message" even though the handshake and msg2 were accepted.
+[verified]
 
 ======================================================
 8. POST-HANDSHAKE MESSAGE
@@ -276,23 +319,29 @@ post-handshake message" even though the handshake and msg2 were accepted.
 
 After msg2 the phone sends a CBOR map with its features and a getInfo
 response. Chrome will not send the CTAP2 request until it receives this.
+[verified]
 
 CBOR map (top level):
   key 1: getInfo response, as a CBOR byte string
+  key 2: linking information (optional; only for state-assisted flows,
+         which this document does not cover) [chromium]
   key 3: features array, e.g. ["ctap"]
 
-getInfo response (nested CBOR map):
-  key 1: versions, e.g. ["FIDO_2_0", "FIDO_2_1"]
-  key 2: extensions, e.g. ["prf"]
+getInfo response (nested CBOR map), as PassKeyChain sends it:
+  key 1: versions, ["FIDO_2_0", "FIDO_2_1"]
   key 3: aaguid, 16 bytes (zeros acceptable)
   key 4: options, {"rk": true, "uv": true}
-         NOTE ORDER: canonical CBOR requires "rk" before "uv" (both 2 bytes,
-         "rk" < "uv" lexically). Chrome's CTAP2 parser rejects the reversed
-         order with a "Map keys must be strictly monotonically increasing"
-         error.
-  key 9: transports, e.g. ["cable", "hybrid", "internal"]
+         "uv": true promises built-in user verification: only claim it if
+         the phone really unlocks before signing.
+  key 9: transports, ["cable", "hybrid", "internal"]
+         ("cable" is not a WebAuthn transport name; Chrome ignores it)
 
-Two padding layers are applied before encryption:
+Key 2 (extensions) is omitted: advertise only extensions you implement.
+(Earlier versions sent ["prf"] without implementing PRF.)
+
+Map keys must be in canonical order (section 13): "rk" before "uv".
+
+Two padding layers are applied before encryption: [verified]
 
   Layer A — EncodePaddedCBORMap (application layer):
     - Encode the CBOR map to bytes: L bytes.
@@ -307,64 +356,98 @@ Two padding layers are applied before encryption:
 
 The two layers are separate. Applying only Layer A produces "Invalid
 padding in caBLE handshake message". Applying neither produces
-"decryption failed for caBLE post-handshake message" (the AEAD key is
-correct but Chrome's Crypter sees garbage after decryption).
+"decryption failed for caBLE post-handshake message".
 
-After Layer B the plaintext is encrypted with txKey and the current
-txNonce, and sent as a raw WebSocket payload (no length prefix).
+After Layer B the plaintext is encrypted with the send key (k2) and the
+current send nonce, and sent as a raw WebSocket payload (no length prefix).
 
 ======================================================
 9. CTAP2 EXCHANGE OVER THE TUNNEL
 ======================================================
 
 Chrome sends the CTAP2 request as a raw WebSocket payload, encrypted with
-its write_key (your read_key) and a transport nonce.
+k1 and the current receive nonce.
 
-The decrypted plaintext begins with the CTAP2 command byte:
+The decrypted plaintext begins with the CTAP2 command byte [spec]:
   0x01 authenticatorMakeCredential
   0x02 authenticatorGetAssertion
-  0x04 authenticatorSelection (rare)
-followed by CBOR.
+  0x04 authenticatorGetInfo        (no parameters: the message is one byte)
+  0x0B authenticatorSelection      (not seen in the hybrid flow)
+followed by the CBOR parameters, if any.
 
-There is NO MessageType prefix on CTAP2 requests in the observed flow. The
-first byte of the plaintext is the CTAP2 command, not a MessageType. (An
-earlier probe makeCredential with a MessageType prefix 0x00 was observed in
-some runs, so the receiver must accept both forms; see section 12.)
+There is NO MessageType prefix on CTAP2 requests in the observed flow; see
+section 12 for the exceptions seen.
 
-For a getAssertion (0x02), the CBOR map contains:
+--- getAssertion request ---
+
+The CBOR map contains [spec]:
   1: rpId (string)
   2: clientDataHash (32 bytes)
-  3: allowList (array of {id: bytes, type: "public-key"})
-  5: options (e.g. {"uv": true})
+  3: allowList (array of {"id": bytes, "type": "public-key"}), optional
+  4: extensions, optional
+  5: options, optional, e.g. {"up": true, "uv": true}
+  6, 7: pinUvAuthParam / pinUvAuthProtocol (not used in hybrid)
+
+Choosing the credential:
+  - Only passkeys whose stored rpId equals the request's rpId qualify.
+  - Non-empty allowList: only passkeys whose credential id is in it.
+  - Empty allowList: any passkey for the rpId (a "discoverable" sign-in
+    without username); if several qualify, let the user pick.
+  - None qualify: answer 0x2E (CTAP2_ERR_NO_CREDENTIALS).
+  - The user cancels or cannot unlock: answer 0x27
+    (CTAP2_ERR_OPERATION_DENIED).
+
+Options: "up": false asks for a silent check without user interaction; a
+phone authenticator that always asks the user can treat every request as
+"up": true, but must then not sign silently. "uv": the UV flag may only be
+set if the user really verified (unlocked). PassKeyChain ignores the options
+and always unlocks, then sets UP and UV.
+
+--- getAssertion response ---
 
 The response is [status][CBOR]:
 
-  status byte: 0x00 (CTAP2_OK), or an error code (e.g. 0x2E = NO_CREDENTIALS)
+  status byte: 0x00 (CTAP2_OK), or an error code with no CBOR after it
   CBOR map:
-    key 1: credential descriptor {id: <requested id>, type: "public-key"}
-    key 2: authenticatorData (rpIdHash || flags || signCount)
-    key 3: signature (DER-encoded ECDSA over authenticatorData || clientDataHash)
-    key 4: user handle — INCLUDE ONLY for discoverable credentials
-           (empty allow list); for a non-discoverable getAssertion Chrome
-           accepts the response without key 4.
+    key 1: credential descriptor {"id": <credential id>, "type": "public-key"}
+           = the chosen passkey's id, which (with an allowList) is one of
+             the requested ids
+    key 2: authenticatorData = SHA-256(rpId) || flags (1 byte) ||
+           signCount (4 bytes, big-endian)
+    key 3: signature: DER-encoded ECDSA P-256 over
+           authenticatorData || clientDataHash
+    key 4: user entity {"id": <user handle bytes>} — a MAP, not the bare
+           handle (name and displayName may be added). Include it when the
+           allowList was empty: the RP then has no other way to know the
+           account. With an allowList Chrome accepts the response without
+           key 4. [verified]
 
-The response's credential id MUST be the id Chrome requested in its allow
-list, not the passkey's own stored id. Echoing a different id makes Chrome
-treat the response as belonging to a different credential and reject it.
-If Chrome's allow list contains an id you have a passkey for, use that
-passkey's private key for the signature; if the requested id does not match
-the passkey you are using, the RP will reject the signature (Chrome
-forwards it unchanged).
+Flags: PassKeyChain sends 0x1D = UP (0x01) | UV (0x04) | BE (0x08) |
+BS (0x10). See quirk O for why BE and BS must stay set for passkeys
+imported from Bitwarden.
 
-The response is encrypted with txKey at the current txNonce and sent as a
+signCount: PassKeyChain sends the counter stored with the passkey, unchanged
+(0 for Bitwarden passkeys). A counter that increases would have to be
+stored and would clash with the copy of the same passkey in Bitwarden, so
+an imported passkey with counter 0 keeps sending 0, which RPs accept as "no
+counter".
+
+The response is encrypted with k2 at the current send nonce and sent as a
 raw WebSocket payload. Do not prepend a MessageType byte and do not
 prepend a length prefix. The CTAP2 status byte is the first byte of the
-plaintext.
+plaintext. [verified]
 
-The makeCredential probe (0x01) is sent by Chrome only when the tunnel
-needs to prove itself; on a clean first connection it is skipped. If it is
-sent, reply with a single status byte 0x2E (NO_CREDENTIALS) — the app does
-not create credentials. This is a 1-byte plaintext encrypted normally.
+--- getInfo (0x04) ---
+
+Answer [0x00] || the same getInfo CBOR as in the post-handshake message.
+Chrome normally uses the post-handshake copy and does not ask. [spec]
+
+--- makeCredential (0x01) ---
+
+Chrome sometimes sends a makeCredential with the dummy rpId ".dummy" (see
+quirk Q). An authenticator that does not create credentials answers
+makeCredential with a single status byte 0x2E (NO_CREDENTIALS), a 1-byte
+plaintext encrypted normally. [verified for the probe]
 
 ======================================================
 10. PADDING AND FRAMING SUMMARY
@@ -373,24 +456,24 @@ not create credentials. This is a 1-byte plaintext encrypted normally.
 Three layers, applied in order to outgoing data:
 
   1. Application (CBOR map) → EncodePaddedCBORMap → 512-byte multiple with
-     uint16_le length in the last 2 bytes. Only for the post-handshake
-     message.
+     uint16_le padding length in the last 2 bytes. Only for the
+     post-handshake message.
 
   2. Transport → Crypter::Encrypt padding → 32-byte multiple with uint8
-     length in the last byte. Applied to every transport message (post-
-     handshake, CTAP2 requests from Chrome, CTAP2 responses from the phone).
+     padding length in the last byte. Applied to every transport message
+     (post-handshake, CTAP2 requests from Chrome, CTAP2 responses from the
+     phone).
 
   3. WebSocket framing: the WebSocket protocol provides message framing.
      No additional length prefix.
 
-The phone's receive side must strip both pads in reverse:
+The phone's receive side strips the transport padding:
 
-  - Decrypt with rxKey/rxNonce.
+  - Decrypt with k1 and the receive nonce.
   - Remove Crypter padding: last byte = N, drop N zero bytes and the length
-    byte.
-  - For the post-handshake message only, remove EncodePaddedCBORMap
-    padding: last 2 bytes = uint16_le(M), drop M zero bytes and the 2-byte
-    length.
+    byte. Reject the message if N + 1 exceeds its length.
+  - (EncodePaddedCBORMap padding only occurs on the post-handshake message,
+    which the phone sends but never receives.)
 
 Applying an extra 2-byte length prefix before WebSocket send shifts the
 ciphertext and breaks AEAD. This was a real bug during development.
@@ -399,34 +482,38 @@ ciphertext and breaks AEAD. This was a real bug during development.
 11. NONCE CONSTRUCTION
 ======================================================
 
-Transport nonces are 12 bytes:
+Transport nonces are 12 bytes: [verified]
 
   bytes 0-7:  all zero
   bytes 8-11: the counter, 32-bit BIG-ENDIAN
 
 Counter starts at 0, increments by 1 per message in each direction.
-Separate counters for transmit (tx) and receive (rx).
+Separate counters for sending and receiving. The counter must not pass
+kMaxSequence (2^24 - 1); a session never comes near that.
 
 The counter is NOT placed in the first 8 bytes little-endian. That was a
 real bug: the post-handshake message worked because its counter was 0, and
 the getAssertion response failed because its counter was 1 and the two
 schemes disagreed.
 
-Handshake-phase AEAD uses its own nonce counter, also 12 bytes with the
-counter in the low 4 bytes; that counter resets at each MixKey.
+Handshake-phase AEAD: every MixKey resets the handshake nonce to 0, and in
+this handshake each key is used for exactly one AEAD operation (tag1, then
+tag2). So the handshake nonce is always 12 zero bytes, and where its
+counter would go makes no difference. (PassKeyChain puts it big-endian in
+bytes 0-3; [unverified] whether Chromium uses the same position.)
 
 ======================================================
 12. MESSAGE TYPE BYTE
 ======================================================
 
-Chromium's v2_constants.h defines:
+Chromium's v2_constants.h defines: [chromium]
 
   kCTAP     = 0x00
   kJSON     = 0x01
   kShutdown = 0x02
   kUpdate   = 0x03
 
-Observed behaviour against Chrome:
+Observed behaviour against Chrome: [verified]
 
   - The CTAP2 getAssertion request (0x02) is sent WITHOUT a MessageType
     prefix. First byte of plaintext is 0x02, then CBOR.
@@ -438,30 +525,38 @@ Observed behaviour against Chrome:
   - A 1-byte message 0x02 means kShutdown (Chrome requesting tunnel close).
   - A 1-byte message 0x03 means kUpdate (Chrome sending update info).
 
-The receive dispatcher should:
+[unverified] Whether Chrome adds the prefix probably depends on what was
+negotiated (the features in the post-handshake message), not on chance.
+Until the rule is known, the receive dispatcher has to recognise both
+forms:
 
-  - Accept [0x00][cmd 0x01-0x04][CBOR] → strip prefix, treat as CTAP2.
-  - Accept [cmd 0x01-0x04][CBOR map start 0xA0..0xBF] → treat as CTAP2.
-  - Treat single byte 0x02 as kShutdown.
-  - Treat single byte 0x03 as kUpdate (ignore).
+  - [0x00][cmd 0x01-0x04][CBOR] → strip the prefix, treat as CTAP2.
+  - [cmd 0x01-0x04][CBOR map start 0xA0..0xBF] → treat as CTAP2.
+  - The single byte 0x04 → CTAP2 getInfo.
+  - The single byte 0x02 → kShutdown.
+  - The single byte 0x03 → kUpdate (ignore).
   - Ignore or drop anything else.
 
-The send path should send [status][CBOR] with no prefix.
+Note the ambiguity this heuristic has to live with: one byte 0x02 is
+kShutdown, not a getAssertion (which always has parameters).
+
+The send path sends [status][CBOR] with no prefix.
 
 ======================================================
 13. CANONICAL CBOR ORDERING
 ======================================================
 
-Chrome's CTAP2 parser enforces canonical CBOR: map keys must be sorted by
-encoded byte length first, then lexicographically.
+Chrome's CTAP2 parser enforces CTAP2 canonical CBOR: map keys must be
+sorted by the length of their ENCODED form first, then bytewise. [spec,
+verified] (So integer keys 0..23 come before 1-character strings, and
+negative integers sort after positive ones of the same encoded length.)
 
 This matters for the getInfo options map: {"uv": true, "rk": true} is
-rejected because both keys are 2 bytes and "rk" < "uv" so "rk" must come
-first. Use {"rk": true, "uv": true}.
+rejected because both keys encode to 3 bytes and "rk" < "uv", so "rk" must
+come first. Use {"rk": true, "uv": true}.
 
-It also matters for any other map where the keys have different lengths.
-The CTAP2 response maps (keys 1, 2, 3, 4 — all 1 byte) are naturally
-ordered.
+Rather than ordering maps by hand, let the encoder sort them. PassKeyChain's
+Cbor.encode does.
 
 ======================================================
 14. QUIRKS AND GOTCHAS
@@ -483,14 +578,15 @@ E. The KNpsk0 pattern with prologue 0x01 is what Chrome uses for
    QR-initiated transactions. NKpsk0 with prologue 0x00 is for
    state-assisted transactions and will not work with Chrome's QR flow.
 
-F. msg1 processing uses MixKey(e_pub_i) in addition to MixHash(e_pub_i).
-   This is not part of standard Noise; Chromium does it.
+F. Processing an e token is MixHash(e) AND MixKey(e), in msg1 and in msg2.
+   This is the standard Noise rule for handshakes with a PSK, easy to
+   overlook when implementing from the basic pattern tables.
 
 G. msg2 must include MixKey(se) = MixKey(ECDH(ephR_priv, peerIdentity65)).
    Missing this produces "Invalid caBLE handshake message".
 
-H. Transport keys are (read, write) in that order. The phone's txKey is
-   write, rxKey is read. Getting this backwards produces "decryption
+H. Transport keys follow Noise Split: the phone receives with the first key
+   and sends with the second. Getting this backwards produces "decryption
    failed for caBLE post-handshake message".
 
 I. Two padding layers for the post-handshake message: EncodePaddedCBORMap
@@ -508,17 +604,20 @@ K. Transport nonce counter is 32-bit big-endian in the last 4 bytes of a
 L. The CTAP2 response must not have a MessageType prefix. The first byte
    is the CTAP2 status byte.
 
-M. The response's credential descriptor must echo the id Chrome requested
-   in its allow list, not the passkey's stored id.
+M. The credential id in the response is the id of the passkey that signed.
+   With an allowList it is therefore one of the requested ids; if no stored
+   passkey's id is in the allowList, do not sign with another one: answer
+   0x2E.
 
 N. The getInfo options map must be ordered "rk" before "uv" for canonical
    CBOR.
 
-O. The authenticatorData flags default to 0x1D (UP|UV|BE|BS). BE|BS
-   declares the credential backup-eligible and currently backed up. For
-   an on-device-only passkey this is arguably incorrect; changing to 0x05
-   (UP|UV) is a policy decision and affects both the hybrid and on-device
-   flows.
+O. Flags 0x1D (UP|UV|BE|BS). BE ("backup eligible") is a property of the
+   credential that must never change: WebAuthn Level 3 lets an RP reject an
+   assertion whose BE differs from registration [spec]. Bitwarden creates
+   its passkeys with BE=1 and BS=1, and a copy stays in Bitwarden, so for
+   imported passkeys 0x1D is the correct value. Do not switch to 0x05.
+   UV may only be set because the phone really unlocks before signing.
 
 P. "Linking information was not received from caBLE device" is an
    informational log from Chrome. It appears on every run and does not
@@ -535,9 +634,49 @@ R. Chrome's FIDO logging in release builds drops FIDO_LOG(DEBUG). Rejection
    line is not a reliable signal; the successful progression
    (kCableV2Connected, established v2.0) is.
 
+S. Command 0x04 is authenticatorGetInfo and comes without parameters, as a
+   single byte; authenticatorSelection is 0x0B.
+
 ======================================================
-15. DEBUGGING CHECKLIST
+15. SECURITY REQUIREMENTS
 ======================================================
+
+Interoperating is not enough; these make the flow safe.
+
+  - Always advertise over BLE, never skip it, and never offer a mode
+    without it. The proximity check is what stops an attacker who relays
+    the QR from a phishing page to a victim somewhere else: without a
+    nearby advert, Chrome never connects.
+  - The phone cannot check the origin. It signs for the rpId that Chrome
+    sends; it is Chrome that checks the rpId against the page. Show the
+    rpId (and the account) to the user before signing, so the user can see
+    what is being approved.
+  - Ask the user (unlock) for every signature; sign nothing before the
+    request has arrived and the user has chosen and unlocked.
+  - Reject the browser's ephemeral key if it is not a point on P-256
+    before using it in ECDH.
+  - Consider rejecting stale QR codes using QR field 3 (the time). Allow
+    for clock differences between computer and phone.
+  - Use fresh randomness for the EID nonce and the ephemeral key on every
+    sign-in.
+  - Never log key material (QR secret, psk, h/ck/k, transport keys) in
+    production builds. The debugging checklist below needs those values;
+    keep such logging behind a debug-only switch.
+  - Time out: stop advertising and close the tunnel when nothing happens
+    for a few minutes, and stop advertising as soon as the handshake is
+    done.
+
+======================================================
+16. DEBUGGING CHECKLIST
+======================================================
+
+If Chrome never connects (no msg1 at all):
+  - Verify the advert is AES-256-ECB with the full 32-byte aesKey, and the
+    4-byte tag is HMAC-SHA256 with hmacKey over the ciphertext.
+  - Verify the routing ID in the plaintext is the one from this
+    connection's X-Cable-Routing-Id.
+  - Verify the BLE advert is actually being broadcast (Bluetooth on, the
+    "Nearby devices" permission granted).
 
 If msg1 fails to decrypt:
   - Verify psk is HKDF(QRsecret, salt=eidPlaintext, info=[3,0,0,0], 32).
@@ -546,6 +685,7 @@ If msg1 fails to decrypt:
   - Verify the protocol is KNpsk0 with prologue 0x01 (for QR flow).
   - Verify h after MixHash([0x01]) equals SHA256(init_h || [0x01]).
   - Verify ck after MixKeyAndHash matches an independent HKDF-96(psk, ck).
+  - Verify MixKey(e_pub_i) follows MixHash(e_pub_i).
 
 If msg1 works but msg2 is rejected:
   - Verify MixKey(e_pub_r) is present.
@@ -554,29 +694,36 @@ If msg1 works but msg2 is rejected:
   - Verify EncryptAndHash uses the empty plaintext.
 
 If msg2 works but post-handshake is rejected:
-  - Verify transport keys are assigned (txKey=write, rxKey=read).
+  - Verify the send key is the second Split key, the receive key the first.
   - Verify both padding layers (EncodePaddedCBORMap then Crypter).
   - Verify no length prefix on WebSocket send.
+  - Verify the getInfo maps are in canonical order.
 
 If post-handshake works but the CTAP2 response is rejected:
   - Verify transport nonce is big-endian in bytes 8-11.
   - Verify the response has no MessageType prefix.
-  - Verify the response credential id matches the requested allow-list id.
+  - Verify the response maps are in canonical order.
+  - Verify key 4, if present, is a map {"id": ...}, not bare bytes.
 
 If the RP rejects the signature:
-  - Verify the passkey used for signing matches the credential id Chrome
-    requested.
+  - Verify the passkey used for signing matches the credential id in the
+    response, and that its rpId equals the request's rpId.
+  - Verify authenticatorData starts with SHA-256 of the rpId, and the
+    signature covers authenticatorData || clientDataHash.
+  - Verify the BE flag matches what the credential had at registration.
 
 ======================================================
-16. REFERENCE: v2_constants.h VALUES
+17. REFERENCE: CONSTANTS
 ======================================================
+
+From Chromium's v2_constants.h and related code: [chromium]
 
 kNonceSize            = 10       (bytes of nonce in EID plaintext)
 kRoutingIdSize        = 3
 kTunnelIdSize         = 16
 kP256X962Length       = 65       (uncompressed P-256 point)
 kCompressedPublicKeySize = 33
-kEIDKeySize           = 64       (AES key 32 || HMAC key 32)
+kEIDKeySize           = 64       (AES-256 key 32 || HMAC key 32)
 kPSKSize              = 32
 kAdvertSize           = 20       (16 AES block + 4 HMAC tag)
 kPostHandshakeMsgPaddingGranularity = 512
@@ -590,6 +737,12 @@ WebSocket subprotocol = "fido.cable"
 Protocol name         = "Noise_KNpsk0_P256_AESGCM_SHA256"
 Prologue              = 0x01
 Cipher suite          = AES-256-GCM, SHA-256, P-256 ECDH
+EID cipher            = AES-256-ECB (one block) + truncated HMAC-SHA256
+
+CTAP2 commands        = 0x01 makeCredential, 0x02 getAssertion,
+                        0x04 getInfo, 0x0B selection
+CTAP2 status          = 0x00 OK, 0x01 invalid command, 0x12 invalid CBOR,
+                        0x27 operation denied, 0x2E no credentials
 
 ======================================================
 END
