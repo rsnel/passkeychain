@@ -145,7 +145,7 @@
       <div class="card">
         <div class="ic">📱</div>
         <h3>You choose the device</h3>
-        <p>Any passkey you own can sign you in on any computer with Bluetooth and a current browser, from this phone, through the open QR sign-in standard those browsers speak. Phone, browser and passkey don’t have to come from the same company.</p>
+        <p>Any passkey you own can sign you in on any computer with Bluetooth and a current browser, from your phone, through the open QR sign-in standard those browsers speak. Phone, browser and passkey don’t have to come from the same company.</p>
       </div>
       <div class="card">
         <div class="ic">🚪</div>
@@ -155,12 +155,12 @@
       <div class="card">
         <div class="ic">✋</div>
         <h3>Nothing happens without you</h3>
-        <p>No account, no server of ours, no telemetry. Every signature, and every new passkey, needs your unlock on your phone, for a site you can see. A sign-in history shows what signed in where.</p>
+        <p>No account, no server of ours, no telemetry. Every signature, and every new passkey, needs your unlock on your phone, for a site you can see.</p>
       </div>
     </div>
     <div class="twin">
       <p class="note">⚖️ <strong>Sovereignty comes with responsibility.</strong> There is no cloud copy to fall back on: lose the phone, and the passkeys on it are gone unless you kept a backup. Keep a password-protected export somewhere safe. An unencrypted export holds every private key, so treat it like the keys to your house.</p>
-      <p class="note">🌐 <strong>What you don’t control.</strong> Signing in on a computer needs a relay on the internet to bring phone and computer together; for Android phones it is run by Google. It only passes along end-to-end encrypted data: it cannot read the request, and it cannot sign anything. The Bluetooth step makes sure your phone is really next to the computer.</p>
+      <p class="note">🌐 <strong>What you don’t control.</strong> Signing in on a computer needs a tunnel server on the internet to bring phone and computer together; for Android phones Google runs it. It only ever sees encrypted data, and it cannot sign anything (<a href="#qr-signin">how that works</a>).</p>
     </div>
   </div>
 </section>
@@ -188,20 +188,20 @@
       <div class="card">
         <div class="ic">🔗</div>
         <h3>Sign in on your computer</h3>
-        <p>Scan the QR code a computer shows when it asks for a passkey, and your phone completes the sign-in over Bluetooth and an encrypted tunnel. Tested with a real Microsoft sign-in. A site’s “create a passkey” code makes a new passkey that is yours from the start. <a href="#qr-signin">How QR sign-in works →</a></p>
+        <p>Scan the QR code a computer shows when it asks for a passkey, and your phone completes the sign-in over Bluetooth and an encrypted tunnel. A site’s “create a passkey” code makes a new passkey that is yours from the start. <a href="#qr-signin">How QR sign-in works →</a></p>
       </div>
       <div class="card">
         <div class="ic">📤</div>
         <h3>Take them with you</h3>
-        <p>Exports in Bitwarden’s format, protected with a password if you like, so another manager can take over at any time. Your passkeys move with you, not with an account.</p>
+        <p>Exports in Bitwarden’s format, protected with a password if you like: as a backup, or to move to another password manager.</p>
       </div>
       <div class="card">
         <div class="ic">⬆️</div>
-        <h3>Open and up to date</h3>
-        <p>Every line is on GitHub under the GPLv3, and the app updates itself from there. A short, encrypted sign-in history shows what signed in where, and when.</p>
+        <h3>Sign-in history</h3>
+        <p>A short, encrypted history shows which site and account signed in where, and when, including attempts that failed or that you cancelled. The app also keeps itself up to date from GitHub.</p>
       </div>
     </div>
-    <p class="note" style="margin-top:22px">🔒 <strong>For passkeys you own.</strong> PassKeyChain holds and uses passkeys of your own accounts. Private keys leave the phone only when you export them yourself; signing happens on the phone, never on a server.</p>
+    <p class="note" style="margin-top:22px">🔒 <strong>For passkeys you own.</strong> PassKeyChain holds and uses the passkeys of your own accounts, and signs only on the phone, never on a server.</p>
   </div>
 </section>
 
@@ -226,7 +226,7 @@
 <section id="qr-signin">
   <div class="wrap">
     <h2>How signing in with a QR code works</h2>
-    <p class="sub">When a website asks your computer for a passkey that lives on your phone, the computer shows a QR code. You scan it, and a few seconds later you are signed in on the computer, without the private key ever leaving your phone. This is an open standard: the browser does not care which app on which phone answers, as long as it holds the key. That is what lets you choose. This is what happens in between.</p>
+    <p class="sub">When a website asks your computer for a passkey that lives on your phone, the computer shows a QR code. You scan it, and a few seconds later you are signed in on the computer, without the private key ever leaving your phone. This is what happens in between.</p>
 
     <figure class="flow-figure">
       <!-- the animation plays the eight steps: wide on desktops, with a caption on tablets, large type on phones; with "reduce motion" the still picture -->
@@ -249,7 +249,7 @@
       <li data-ch="tun">
         <h3>Set up the tunnel</h3>
         <div class="route"><i></i>Phone → tunnel server · internet</div>
-        <p>Phone and computer are often not on the same network, so they meet at a relay on the internet: the tunnel server (for Android phones it is run by Google). The phone connects first and reserves a “meeting room”.</p>
+        <p>Phone and computer are often not on the same network, so they meet at a relay on the internet: the tunnel server. The phone connects first and reserves a “meeting room”.</p>
       </li>
       <li data-ch="bt">
         <h3>Tell the browser where to go</h3>
@@ -257,14 +257,14 @@
         <p>The phone sends a short Bluetooth broadcast, encrypted with the keys from the QR, saying which tunnel server and which meeting room to use. Only the computer that showed the QR can read it, and only when it is close by.</p>
       </li>
       <li data-ch="tun">
-        <h3>The browser joins and starts a handshake</h3>
+        <h3>The browser starts the handshake</h3>
         <div class="route"><i></i>Computer → tunnel → phone · internet</div>
         <p>The computer connects to the same meeting room and sends the first message of a cryptographic handshake, built from the keys of step&nbsp;1.</p>
       </li>
       <li data-ch="tun">
-        <h3>The app answers the handshake</h3>
+        <h3>The phone answers the handshake</h3>
         <div class="route"><i></i>Phone → tunnel → computer · internet</div>
-        <p>The phone answers. Both sides now share fresh session keys, and everything after this is encrypted end to end. The tunnel server only passes along data it cannot read.</p>
+        <p>The phone answers. Both sides now share fresh session keys, and everything after this is encrypted end to end.</p>
       </li>
       <li data-ch="tun">
         <h3>The browser asks for a signature</h3>
@@ -277,15 +277,15 @@
         <p>The phone shows which website and which account want to sign in, and asks you to unlock. Nothing is signed until you do. Cancel, and the browser simply gets a “no”. With more than one passkey for the site, you pick which one.</p>
       </li>
       <li data-ch="tun" class="done">
-        <h3>The phone sends the signature: finished!</h3>
+        <h3>The phone sends the signature</h3>
         <div class="route"><i></i>Phone → computer → website</div>
-        <p>The phone signs the challenge with the passkey’s private key. The browser hands the signature to the website, which checks it with the public key it saved when you created the passkey. You are signed in, and the private key never left your phone.</p>
+        <p>The phone signs the challenge with the passkey’s private key. The browser hands the signature to the website, which checks it with the public key it saved when you created the passkey. You are signed in.</p>
       </li>
     </ol>
 
     <div class="safe">
       <div class="card"><div class="ic">📍</div><h3>You have to be in the room</h3><p>Without the Bluetooth step the browser never learns where to connect. A fake website that shows a real QR to someone far away gets nowhere.</p></div>
-      <div class="card"><div class="ic">🙈</div><h3>The relay is blind</h3><p>The tunnel server only forwards encrypted data. It cannot read the challenge, the signature or anything else.</p></div>
+      <div class="card"><div class="ic">🙈</div><h3>The tunnel server is blind</h3><p>It only forwards encrypted data. It cannot read the challenge, the signature or anything else.</p></div>
       <div class="card"><div class="ic">🔗</div><h3>Tied to the real website</h3><p>The browser only asks for a signature for the website you are actually on, and the signature covers that website’s name, so a look-alike site cannot use it.</p></div>
     </div>
 

@@ -74,7 +74,7 @@ def ripples(cx, cy, step, n=3, reach=150, start=10):
     return ''.join(out)
 
 CAPTION = {1: 'The phone scans the QR code and derives keys',
-           2: 'The phone opens a tunnel at the relay server',
+           2: 'The phone connects to the tunnel server',
            3: 'Bluetooth: “I am nearby, meet me there”',
            4: 'The browser joins and starts the handshake',
            5: 'The phone answers: end-to-end encrypted now',
@@ -173,10 +173,10 @@ SIDE = {1: ('Scan the QR, derive keys', 'Computer → phone · QR code'),
         2: ('Set up the tunnel', 'Phone → tunnel server'),
         3: ('Tell the browser where to go', 'Phone → computer · Bluetooth'),
         4: ('The browser starts the handshake', 'Computer → tunnel → phone'),
-        5: ('The phone answers it', 'Phone → tunnel → computer'),
+        5: ('The phone answers the handshake', 'Phone → tunnel → computer'),
         6: ('The browser asks for a signature', 'Computer → phone · tunnel'),
         7: ('You approve', 'On the phone · fingerprint, face or PIN'),
-        8: ('The signature: signed in!', 'Phone → computer → website')}
+        8: ('The phone sends the signature', 'Phone → computer → website')}
 
 def side_panel(x0=1030, y0=-28, w=440, row=86, hgt=76):
     out = []
@@ -203,7 +203,7 @@ def side_panel(x0=1030, y0=-28, w=440, row=86, hgt=76):
 
 # ---- phone version: larger labels, and a big caption card for the current step ----
 PHONE_TEXT = {1: 'The phone reads the QR with its camera. Both sides now derive the same keys.',
-              2: 'The phone connects to a relay on the internet and reserves a meeting room.',
+              2: 'The phone connects to the tunnel server on the internet and reserves a meeting room.',
               3: 'A short, encrypted Bluetooth broadcast tells the computer where to meet.',
               4: 'The computer joins the meeting room and starts an encrypted handshake.',
               5: 'The phone answers. From now on everything is encrypted end to end.',
