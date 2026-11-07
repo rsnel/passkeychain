@@ -14,6 +14,7 @@ object CtapAuthenticator {
 
     const val CMD_MAKE_CREDENTIAL = 0x01
     const val CMD_GET_ASSERTION = 0x02
+    const val CMD_GET_INFO = 0x04
 
     const val CTAP2_OK = 0x00
     const val CTAP1_ERR_INVALID_COMMAND = 0x01
@@ -55,6 +56,7 @@ object CtapAuthenticator {
     fun handle(command: ByteArray, chooser: Chooser): ByteArray {
         if (command.isEmpty()) return byteArrayOf(CTAP1_ERR_INVALID_COMMAND.toByte())
         return when (command[0].toInt() and 0xFF) {
+            CMD_GET_INFO -> byteArrayOf(CTAP2_OK.toByte()) + getInfo()
             // this app uses existing passkeys, it does not create new ones
             CMD_MAKE_CREDENTIAL -> byteArrayOf(CTAP2_ERR_NO_CREDENTIALS.toByte())
             CMD_GET_ASSERTION -> {
@@ -72,6 +74,17 @@ object CtapAuthenticator {
             else -> byteArrayOf(CTAP1_ERR_INVALID_COMMAND.toByte())
         }
     }
+
+    /**
+     * The authenticatorGetInfo response (CBOR, without status byte); also sent
+     * inside the post-handshake message. No extensions: none are implemented.
+     */
+    fun getInfo(): ByteArray = Cbor.encode(mapOf<Any, Any>(
+        1 to listOf("FIDO_2_0", "FIDO_2_1"),                  // versions
+        3 to ByteArray(16),                                    // aaguid: none
+        4 to mapOf<Any, Any>("rk" to true, "uv" to true),      // options
+        9 to listOf("cable", "hybrid", "internal"),            // transports
+    ))
 
     /** Parses authenticatorGetAssertion: {1: rpId, 2: clientDataHash, 3: allowList, ...}. */
     fun parseGetAssertion(command: ByteArray): GetAssertionRequest {

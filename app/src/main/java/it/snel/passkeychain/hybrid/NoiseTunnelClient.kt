@@ -27,19 +27,22 @@ import javax.crypto.spec.SecretKeySpec
 import it.snel.passkeychain.webauthn.Cbor
 
 /**
- * caBLE v2 tunnel client. WebSocket + Noise NKpsk0 responder, following
- * Chromium device/fido/cable/noise.cc exactly:
+ * caBLE v2 tunnel client: WebSocket + Noise KNpsk0 responder, as in Chromium
+ * device/fido/cable/noise.cc and v2_handshake.cc for QR-initiated sign-ins
+ * (see docs/PROTOCOL.md, section 6):
  *
- *   Init(kNKpsk0)          -> ck = zeros || "Noise_NKpsk0_P256_AESGCM_SHA256", h = ck
- *   MixHash([0x00])
- *   MixHash(peerIdentity65)  // the QR's 65-byte uncompressed P-256 public key
- *   MixKeyAndHash(psk)       // HKDF<96>(ikm=psk, salt=ck) -> (ck, hash, key); MixHash(hash)
+ *   h = ck = "Noise_KNpsk0_P256_AESGCM_SHA256" padded with one zero byte
+ *   MixHash([0x01])          // prologue of the QR flow
+ *   MixHash(peerIdentity65)  // the browser's static key from the QR, uncompressed
+ *   MixKeyAndHash(psk)
+ *   -> e                     msg1 from the browser
+ *   <- e, ee, se             msg2 from us
  *
- * Then the NKpsk0 pattern: <- e, ee (msg2 from responder).
+ * With Debug logging on, h, ck, k and the raw messages are logged.
  *
- * Everything is logged: h, ck, k, nonce counter, and raw message bytes.
+ * [onHandshakeDone] is called once the handshake has completed (progress
+ * display, and the Bluetooth advert can stop: the browser has found us).
  */
-/** [onHandshakeDone] is called once the Noise handshake with the browser has completed (for progress display). */
 class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTransport.TunnelClient {
 
     private val TAG = "NoiseTunnelClient"
@@ -95,17 +98,12 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
         val routingId = hexToBytes(shardHeader.replace("-", ""))
         require(routingId.size == 3) { "routing ID must be 3 bytes, got ${routingId.size}" }
 
-        // Construct the channel lazily. NoiseResponderChannel reads
-        // STATIC_PSK and STATIC_EID_PLAINTEXT in its init; those statics are
-        // set by HybridTransport.authenticate() after connectNewTunnel
-        // returns. Constructing the channel here would freeze the zero
-        // defaults. Lazy construction defers init until authenticate()
-        // accesses newTunnel.channel, which is after the statics are set.
+        // The PSK depends on the advert, which needs this routing ID first,
+        // so the Noise channel is opened later, by HybridTransport.
         return object : HybridTransport.TunnelClient.NewTunnel {
             override val routingId: ByteArray = routingId
-            override val channel: HybridTransport.TunnelClient.Channel by lazy {
-                NoiseResponderChannel(ws, incoming)
-            }
+            override fun open(peerIdentity65: ByteArray, psk: ByteArray): HybridTransport.TunnelClient.Channel =
+                NoiseResponderChannel(ws, incoming, NoiseState(peerIdentity65, psk))
         }
     }
 
@@ -137,9 +135,8 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
         init {
             Dbg.d(TAG, "NoiseState init: psk           = ${hex(psk)}")
             Dbg.d(TAG, "NoiseState init: peerIdentity65 = ${hex(peerIdentity65)}")
-            Dbg.d(TAG, "NoiseState init: eidPlaintext  = ${hex(STATIC_EID_PLAINTEXT)}")
 
-            // Init(kNKpsk0): ck = zeros || protocol_name; h = ck
+            // Init(kKNpsk0): the 31-byte protocol name padded to 32 bytes; h = ck
             val nameBytes = PROTOCOL_NAME.toByteArray(Charsets.US_ASCII)
             ck = ByteArray(32)
             System.arraycopy(nameBytes, 0, ck, 0, minOf(nameBytes.size, 32))
@@ -147,8 +144,8 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             Dbg.d(TAG, "init ck = ${hex(ck)}")
             Dbg.d(TAG, "init h  = ${hex(h)}")
 
-            // NKpsk0 responder uses prologue = 0x00 (Chromium RespondToHandshake,
-            // kNKpsk0 branch). The NKpsk0 branch uses 0x01.
+            // prologue: 0x01 for the QR flow (KNpsk0); 0x00 would be NKpsk0, for
+            // state-assisted (linked) sign-ins, which this app does not do
             mixHash(byteArrayOf(0x01))
             Dbg.d(TAG, "after MixHash([0x01]) h = ${hex(h)}")
 
@@ -185,7 +182,8 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
 
         fun encryptAndHash(plaintext: ByteArray): ByteArray {
             val nonceBytes = ByteArray(12)
-            // first 4 bytes BE counter
+            // counter big-endian in bytes 0-3; in this handshake it is always 0,
+            // because every key is used for one AEAD operation only
             nonceBytes[0] = ((nonce ushr 24) and 0xFF).toByte()
             nonceBytes[1] = ((nonce ushr 16) and 0xFF).toByte()
             nonceBytes[2] = ((nonce ushr 8) and 0xFF).toByte()
@@ -225,22 +223,14 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
     private inner class NoiseResponderChannel(
         private val ws: WebSocket,
         private val incoming: LinkedBlockingQueue<ByteArray>,
+        private val noise: NoiseState,
     ) : HybridTransport.TunnelClient.Channel {
 
-        private val noise: NoiseState
         private var txKey: ByteArray? = null
         private var rxKey: ByteArray? = null
         private var txNonce = 0L
         private var rxNonce = 0L
         private var handshakeDone = false
-
-        init {
-            // We do not yet know peerIdentity or psk from inside the channel.
-            // Both are injected by HybridTransport via the NewTunnel interface
-            // in a real implementation; for now we read them from static fields
-            // that HybridTransport sets before calling receive().
-            noise = NoiseState(STATIC_PEER_IDENTITY, STATIC_PSK)
-        }
 
         override fun receive(): ByteArray {
             if (!handshakeDone) {
@@ -277,6 +267,11 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
                 if (pt.size == 1 && first == 0x03) {
                     Dbg.d(TAG, "receive(): kUpdate, ignoring")
                     continue
+                }
+                // authenticatorGetInfo has no parameters: a bare 0x04
+                if (pt.size == 1 && first == CtapAuthenticator.CMD_GET_INFO) {
+                    Dbg.d(TAG, "receive(): bare CTAP2 getInfo")
+                    return pt
                 }
                 // MessageType::kCTAP (0x00) prefix, followed by a CTAP2 command byte
                 if (first == 0x00 && pt.size >= 2 && second in 0x01..0x04) {
@@ -325,7 +320,7 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             val tag1 = msg1.copyOfRange(65, msg1.size)
             Dbg.d(TAG, "msg1 e_pub_i = ${hex(ePubI)}")
             Dbg.d(TAG, "msg1 tag1 = ${hex(tag1)}")
-            Dbg.d(TAG, "msg1 e_pub_i on curve: ${isOnCurve(ePubI)}")
+            if (!isOnCurve(ePubI)) throw IllegalStateException("The computer sent an invalid key")
 
             // Responder generates its ephemeral
             val kpg = KeyPairGenerator.getInstance("EC")
@@ -334,21 +329,12 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             val ephPubR = uncompressed(ephR.public as ECPublicKey)
             Dbg.d(TAG, "responder e_pub_r = ${hex(ephPubR)}")
 
-            // Process msg1 in the order the Noise pattern dictates:
-            //   1. MixHash(e_pub_i)          (e token)
-            //   2. DecryptAndHash(tag1)      (the payload after e)
-            // The ee DH belongs to msg2, NOT msg1, so it must not touch k before
-            // tag1 is authenticated. Getting this order wrong produces exactly
-            // the AEAD open failure we saw: decrypting with a key that was
-            // already advanced by MixKey(ee).
+            // msg1 (-> e): the e token, then its (empty) payload. In a psk
+            // handshake every e token is MixHash(e) and MixKey(e) (Noise spec,
+            // section 9). The ee DH belongs to msg2: it must not change k
+            // before tag1 is checked.
             noise.mixHash(ePubI)
             Dbg.d(TAG, "after MixHash(e_pub_i) h = ${hex(noise.h)}")
-
-            // Chromium's RespondToHandshake does, for the NKpsk0 branch:
-            //   noise.MixHash(peer_point_bytes);
-            //   noise.MixKey(peer_point_bytes);
-            //   // no es DH (identity is null)
-            //   noise.DecryptAndHash(ciphertext);
             noise.mixKey(ePubI)
             Dbg.d(TAG, "after MixKey(e_pub_i) ck = ${hex(noise.ck)}")
             Dbg.d(TAG, "after MixKey(e_pub_i) k  = ${hex(noise.k)}")
@@ -356,17 +342,13 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             val pt1 = noise.decryptAndHash(tag1)
             Dbg.d(TAG, "msg1 plaintext = ${hex(pt1)} (expected empty)")
 
-            // Build msg2: <- e, ee
-            //   1. MixHash(e_pub_r)          (e token)
-            //   2. ee = ECDH(eph_priv_r, e_pub_i); MixKey(ee)
-            //   3. EncryptAndHash(empty)     (payload)
+            // msg2 (<- e, ee, se):
+            //   MixHash(e_pub_r); MixKey(e_pub_r)   e token (psk handshake)
+            //   MixKey(ECDH(e_r, e_i))              ee
+            //   MixKey(ECDH(e_r, s_i))              se, s_i = the QR key
+            //   EncryptAndHash(empty)               payload
             noise.mixHash(ephPubR)
             Dbg.d(TAG, "after MixHash(e_pub_r) h = ${hex(noise.h)}")
-            // Chromium's ProcessResponse does MixHash(e_pub_r), then
-            // MixKey(e_pub_r), then MixKey(ee). The MixKey(e_pub_r) was
-            // missing here, so the initiator's DecryptAndHash saw a different
-            // key than we used to encrypt tag2 and rejected msg2 with
-            // "Invalid caBLE handshake message".
             noise.mixKey(ephPubR)
             Dbg.d(TAG, "after MixKey(e_pub_r) ck = ${hex(noise.ck)}")
             Dbg.d(TAG, "after MixKey(e_pub_r) k  = ${hex(noise.k)}")
@@ -387,13 +369,7 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             Dbg.d(TAG, "after MixKey(ee) k  = ${hex(noise.k)}")
             Dbg.d(TAG, "after MixKey(ee) h  = ${hex(noise.h)}")
 
-            // KNpsk0 msg2 must also mix the 'se' DH. RespondToHandshake in
-            // v2_handshake.cc does, when peer_identity is set:
-            //   ECDH_compute_key(shared_key_se, peer_identity_point, ephemeral_key);
-            //   noise.MixKey(shared_key_se);
-            // peer_identity_point is the QR's static public key; ephemeral_key
-            // is our responder ephemeral. From our side that is
-            // ECDH(ephR_private, peerIdentity65).
+            // se: our ephemeral with the browser's static key from the QR
             val ckBeforeSe = noise.ck.copyOf()
             val se = ecdh(ephR.private as ECPrivateKey, noise.peerIdentity65)
             Dbg.d(TAG, "msg2-check ck_before_se = ${hex(ckBeforeSe)}")
@@ -407,11 +383,8 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             Dbg.d(TAG, "msg2 ${msg2.size} bytes: ${hex(msg2)}")
             ws.send(okio.ByteString.of(*msg2))
 
-            // Split
-            // Chromium's traffic_keys() returns (read_key, write_key).
-            // read_key is what Chrome uses to send to us; write_key is what
-            // we use to send to Chrome. The first HKDF output is read_key,
-            // the second is write_key.
+            // Noise Split: the first key encrypts initiator -> responder (we
+            // receive with it), the second responder -> initiator (we send).
             val (readKey, writeKey) = noise.split()
             txKey = writeKey
             rxKey = readKey
@@ -422,13 +395,7 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             // response (msg2), the authenticator sends a post-handshake message
             // with its features and a CTAP2 getInfo response. Chrome will not
             // send the actual CTAP2 command until it sees this.
-            val getInfo = Cbor.encode(linkedMapOf<Any, Any>(
-                1 to listOf("FIDO_2_0", "FIDO_2_1"),     // versions
-                2 to listOf("prf"),                       // extensions
-                3 to ByteArray(16),                       // aaguid
-                4 to linkedMapOf<Any, Any>("rk" to true, "uv" to true), // options (canonical: rk < uv)
-                9 to listOf("cable", "hybrid", "internal") // transports
-            ))
+            val getInfo = CtapAuthenticator.getInfo()
             val postHandshakeCbor = Cbor.encode(linkedMapOf<Any, Any>(
                 1 to getInfo,                             // getInfo, CBOR byte string
                 3 to listOf("ctap")                       // features
@@ -530,17 +497,6 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
             val yb = fixed(y.toByteArray(), 32)
             return byteArrayOf(0x04) + xb + yb
         }
-
-        // Set by HybridTransport before calling receive(). Ugly but pragmatic for now.
-        @Volatile var STATIC_PEER_IDENTITY: ByteArray = ByteArray(65)
-        @Volatile var STATIC_PSK: ByteArray = ByteArray(32)
-        // Diagnostic only: the 16-byte EID plaintext whose bytes are the salt
-        // for the PSK derivation. Logged so we can cross-check HybridTransport
-        // and NoiseState see the same bytes.
-        @Volatile var STATIC_EID_PLAINTEXT: ByteArray = ByteArray(16)
-        // Responder's static P-256 private key, PKCS#8 DER. Used for the es DH
-        // in msg1. Its public half is what the QR carries as peerPublicKey.
-        @Volatile var STATIC_RESPONDER_PRIV: ByteArray? = null
 
         private fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
 

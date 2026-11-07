@@ -2,11 +2,8 @@ package it.snel.passkeychain.hybrid
 
 import java.util.UUID
 import it.snel.passkeychain.model.Passkey
-import it.snel.passkeychain.webauthn.Assertion
-import it.snel.passkeychain.webauthn.Cbor
 import java.security.SecureRandom
 import javax.crypto.Cipher
-import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -37,13 +34,18 @@ class HybridTransport(
         /**
          * Connect to wss://<tunnelDomain>/cable/new/<hex(tunnelId)>, with the
          * fido.cable subprotocol, and return the routing ID read from the
-         * X-caBLE-Shard response header. The WebSocket must remain open and
-         * ready to send/receive Noise handshake bytes.
+         * X-Cable-Routing-Id response header. The WebSocket must remain open
+         * and ready to send/receive Noise handshake bytes.
          */
         fun connectNewTunnel(tunnelUrl: String): NewTunnel
         interface NewTunnel {
-            val routingId: ByteArray   // 3 bytes, from X-caBLE-Shard
-            val channel: Channel       // Noise transport, after handshake
+            val routingId: ByteArray   // 3 bytes, from X-Cable-Routing-Id
+            /**
+             * The Noise channel on this WebSocket, for the browser whose QR key is
+             * [peerIdentity65] (uncompressed P-256) and the [psk] derived from the
+             * advertised EID. The handshake runs on the first receive().
+             */
+            fun open(peerIdentity65: ByteArray, psk: ByteArray): Channel
         }
         interface Channel {
             fun send(plaintext: ByteArray)
@@ -52,47 +54,30 @@ class HybridTransport(
         }
     }
 
-    data class Keys(val eid: ByteArray, val tunnelId: ByteArray, val psk: ByteArray)
-
-    fun deriveKeys(qr: FidoQr): Keys {
-        val salt = ByteArray(0)
-        val eidKeyMaterial = hkdf(qr.qrSecret, salt, byteArrayOf(1, 0, 0, 0), 64)
-        val aesKey = eidKeyMaterial.copyOfRange(0, 32)
-        val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
-        val tunnelId = hkdf(qr.qrSecret, salt, byteArrayOf(2, 0, 0, 0), 16)
-        // psk is derived in authenticate() once the EID plaintext exists,
-        // because the BLE advert plaintext is its HKDF salt.
-        val eidPayload = buildEidPlaintext(aesKey, hmacKey, ByteArray(3)).let { encryptEid(aesKey, hmacKey, it) }
-        return Keys(eidPayload, tunnelId, ByteArray(0))
-    }
-
     /**
-     * Build the 20-byte EID payload. The plaintext layout is:
-     *   byte 0: 0x00
-     *   bytes 1-10: 10-byte nonce
-     *   bytes 11-13: routing ID (3 bytes, from X-caBLE-Shard)
-     *   bytes 14-15: tunnel server domain (big-endian, 0 for cable.ua5v.com)
+     * The 16-byte EID plaintext (Chromium eid::FromComponents):
+     *   byte 0: 0x00 | bytes 1-10: random nonce | bytes 11-13: routing ID |
+     *   bytes 14-15: tunnel server domain (0 = cable.ua5v.com).
+     * The same bytes are the HKDF salt for the Noise PSK.
      */
-    /**
-     * Build the 16-byte EID plaintext. Layout per Chromium FromComponents:
-     *   1 (0x00) + 10 (nonce) + 3 (routing_id) + 2 (domain) = 16.
-     * The plaintext is also the HKDF salt for the Noise PSK.
-     */
-    fun buildEidPlaintext(aesKey: ByteArray, hmacKey: ByteArray, routingId: ByteArray): ByteArray {
+    fun buildEidPlaintext(routingId: ByteArray): ByteArray {
         require(routingId.size == 3) { "routingId must be 3 bytes" }
         val plaintextEid = ByteArray(16)
-        plaintextEid[0] = 0
         val nonce = ByteArray(10)
         SecureRandom().nextBytes(nonce)
         System.arraycopy(nonce, 0, plaintextEid, 1, 10)
         System.arraycopy(routingId, 0, plaintextEid, 11, 3)
-        // bytes 14-15 already zero (domain 0)
+        // byte 0 and bytes 14-15 stay zero
         return plaintextEid
     }
 
-    /** AES-ECB the plaintext with aesKey, HMAC-SHA256 the ciphertext with hmacKey,
-     *  return the 20-byte BLE payload: 16-byte ciphertext || 4-byte HMAC tag. */
+    /**
+     * The 20-byte BLE payload: AES-256-ECB of the one-block plaintext with the
+     * full 32-byte [aesKey], then the first 4 bytes of HMAC-SHA256(key = hmacKey,
+     * message = ciphertext).
+     */
     fun encryptEid(aesKey: ByteArray, hmacKey: ByteArray, plaintextEid: ByteArray): ByteArray {
+        require(aesKey.size == 32) { "EID AES key must be 32 bytes (AES-256)" }
         require(plaintextEid.size == 16) { "EID plaintext must be 16 bytes" }
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"))
@@ -110,51 +95,33 @@ class HybridTransport(
      * before it returns [CtapAuthenticator.Decision.Sign].
      */
     fun authenticate(qr: FidoQr, chooser: CtapAuthenticator.Chooser): ByteArray {
-        val salt = ByteArray(0)
-        val eidKeyMaterial = hkdf(qr.qrSecret, salt, byteArrayOf(1, 0, 0, 0), 64)
+        // HKDF labels (Chromium DerivedValueType): 1 EID key, 2 tunnel ID, 3 PSK
+        val eidKeyMaterial = hkdf(qr.qrSecret, ByteArray(0), label(1), 64)
         val aesKey = eidKeyMaterial.copyOfRange(0, 32)
         val hmacKey = eidKeyMaterial.copyOfRange(32, 64)
-        val tunnelId = hkdf(qr.qrSecret, salt, byteArrayOf(2, 0, 0, 0), 16)
+        val tunnelId = hkdf(qr.qrSecret, ByteArray(0), label(2), 16)
+        val peer65 = NoiseTunnelClient.decompressPeerIdentity(qr.peerPublicKey)
 
-        // 1. Connect /cable/new/ FIRST. The WebSocket must open before we advertise,
-        //    because the routing ID comes from the response headers.
+        // 1. Open /cable/new/ first: the routing ID for the advert comes from its response headers.
         val newTunnelUrl = "wss://cable.ua5v.com/cable/new/" + tunnelId.joinToString("") { "%02x".format(it) }
-
-        // Inject peer identity so NoiseTunnelClient can build its state. PSK is
-        // injected after the EID plaintext exists, because the plaintext is its salt.
-        val peer65 = it.snel.passkeychain.hybrid.NoiseTunnelClient.decompressPeerIdentity(qr.peerPublicKey)
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PEER_IDENTITY = peer65
-
-        // Responder's static keypair. Its public half is the QR's peerPublicKey;
-        // the private half is derived from qrSecret so both sides agree. Best-guess
-        // info label [4,0,0,0]; the next handshake run will confirm whether the
-        // es DH succeeds, by whether msg1 decrypts.
-        val staticPrivSeed = hkdf(qr.qrSecret, salt, byteArrayOf(4, 0, 0, 0), 32)
-        val staticPrivPkcs8 = p256PrivateKeyFromScalar(staticPrivSeed)
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_RESPONDER_PRIV = staticPrivPkcs8
-
         progress(Progress.TunnelOpening(java.net.URI(newTunnelUrl).host))
         val newTunnel = tunnel.connectNewTunnel(newTunnelUrl)
         progress(Progress.TunnelOpen)
-        val routingId = newTunnel.routingId
 
-        // 2. Build the 16-byte EID plaintext. Its bytes are the HKDF salt for the PSK.
-        val eidPlaintext = buildEidPlaintext(aesKey, hmacKey, routingId)
-        // 3. Derive the Noise PSK: HKDF(qrSecret, salt=eidPlaintext, info=[3,0,0,0]).
-        val psk = hkdf(qr.qrSecret, eidPlaintext, byteArrayOf(3, 0, 0, 0), 32)
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_PSK = psk
-        it.snel.passkeychain.hybrid.NoiseTunnelClient.STATIC_EID_PLAINTEXT = eidPlaintext
+        // 2. The EID plaintext, and from exactly those bytes the Noise PSK.
+        val eidPlaintext = buildEidPlaintext(newTunnel.routingId)
+        val psk = hkdf(qr.qrSecret, eidPlaintext, label(3), 32)
         it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: eidPlaintext = " + eidPlaintext.joinToString("") { "%02x".format(it) })
         it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: psk          = " + psk.joinToString("") { "%02x".format(it) })
         it.snel.passkeychain.util.Dbg.d("HybridTransport", "authenticate: peerIdentity = " + peer65.joinToString("") { "%02x".format(it) })
-        // 4. Encrypt the EID and advertise it.
-        val eid = encryptEid(aesKey, hmacKey, eidPlaintext)
-        ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), eid)
+
+        // 3. Advertise the encrypted EID: proof to the browser that this phone is nearby.
+        ble.advertise(UUID.fromString("0000FFF9-0000-1000-8000-00805F9B34FB"), encryptEid(aesKey, hmacKey, eidPlaintext))
         progress(Progress.Broadcasting)
 
         try {
-            // 3. Wait for the Noise handshake + CTAP2 request on the already-open WebSocket.
-            val channel = newTunnel.channel
+            // 4. Noise handshake (on the first receive), then one CTAP2 request and its answer.
+            val channel = newTunnel.open(peer65, psk)
             val request = channel.receive()
             val response = CtapAuthenticator.handle(request, chooser)
             channel.send(response)
@@ -165,27 +132,13 @@ class HybridTransport(
         }
     }
 
+    private fun label(n: Int) = byteArrayOf(n.toByte(), 0, 0, 0)
+
     /** Signs [ctapRequest] with [passkey] without asking anyone; for tests. */
     fun buildGetAssertionResponse(ctapRequest: ByteArray, passkey: Passkey): ByteArray =
         CtapAuthenticator.handle(ctapRequest) { CtapAuthenticator.Decision.Sign(passkey) }
 
-    private fun hexOf(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
-
-    private fun b64urlToBytes(s: String): ByteArray = it.snel.passkeychain.util.B64.dUrl(s)
-
     companion object {
-        /** Derive a P-256 private key (PKCS#8 DER) from a 32-byte scalar. */
-        fun p256PrivateKeyFromScalar(scalar: ByteArray): ByteArray {
-            require(scalar.size == 32) { "scalar must be 32 bytes" }
-            val params = java.security.AlgorithmParameters.getInstance("EC")
-                .apply { init(java.security.spec.ECGenParameterSpec("secp256r1")) }
-                .getParameterSpec(java.security.spec.ECParameterSpec::class.java)
-            val d = java.math.BigInteger(1, scalar)
-            val priv = java.security.KeyFactory.getInstance("EC")
-                .generatePrivate(java.security.spec.ECPrivateKeySpec(d, params))
-            return priv.encoded
-        }
-
         fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
             val mac = Mac.getInstance("HmacSHA256")
             mac.init(SecretKeySpec(if (salt.isEmpty()) ByteArray(32) else salt, "HmacSHA256"))
@@ -201,6 +154,5 @@ class HybridTransport(
             }
             return out
         }
-        private fun sha256(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b)
     }
 }

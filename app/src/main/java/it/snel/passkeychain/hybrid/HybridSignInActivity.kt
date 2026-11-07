@@ -271,6 +271,12 @@ class HybridSignInActivity : FragmentActivity() {
                 scannedQr = qr
                 frozen = runCatching { freeze(code, imageW, imageH) }.getOrNull() // before the camera stops
                 cameraProvider?.unbindAll()
+                if (qr.hint == "mc") {
+                    // the site wants to create a passkey; this app only signs in with imported ones
+                    set(Step.Scan, State.Failed("This QR code is for creating a new passkey. PassKeyChain can only " +
+                        "sign in with passkeys you imported: create the passkey in Bitwarden, then import it."))
+                    return@addOnSuccessListener
+                }
                 done(Step.Scan)
                 checkBluetoothAndStart()
             }
@@ -300,7 +306,10 @@ class HybridSignInActivity : FragmentActivity() {
     private fun start(qr: FidoQr) {
         set(Step.Tunnel, State.Active)
         val ble = AndroidBleAdvertiser(this).also { bleAdvertiser = it }
-        val tunnel = NoiseTunnelClient(onHandshakeDone = { done(Step.KeyExchange, Step.Sign) })
+        val tunnel = NoiseTunnelClient(onHandshakeDone = {
+            ble.stop() // the computer has found the phone: no need to keep broadcasting
+            done(Step.KeyExchange, Step.Sign)
+        })
         val transport = HybridTransport(ble, tunnel) { p ->
             when (p) {
                 is HybridTransport.Progress.TunnelOpening -> runOnUiThread { tunnelHost = p.host }

@@ -26,11 +26,23 @@ object Cbor {
             is String -> { val b = v.toByteArray(Charsets.UTF_8); typeLen(o, 3, b.size.toLong()); o.write(b) }
             is List<*> -> { typeLen(o, 4, v.size.toLong()); v.forEach { write(o, it) } }
             is Map<*, *> -> {
+                // CTAP2 canonical order: shorter encoded key first, then bytewise
                 typeLen(o, 5, v.size.toLong())
-                v.forEach { (k, value) -> write(o, k); write(o, value) }
+                v.entries.map { encode(it.key) to it.value }
+                    .sortedWith { a, b -> compareKeys(a.first, b.first) }
+                    .forEach { (k, value) -> o.write(k); write(o, value) }
             }
             else -> throw IllegalArgumentException("unsupported CBOR type: $v")
         }
+    }
+
+    private fun compareKeys(a: ByteArray, b: ByteArray): Int {
+        if (a.size != b.size) return a.size - b.size
+        for (i in a.indices) {
+            val d = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
+            if (d != 0) return d
+        }
+        return 0
     }
 
     private fun writeLong(o: ByteArrayOutputStream, n: Long) {

@@ -253,6 +253,24 @@ class CredentialKeyTest {
         assertTrue("hybrid assertion signature must verify", v.verify(sig))
     }
 
+    @Test fun cborMapsAreWrittenInCanonicalOrder() {
+        // CTAP2 canonical: shorter encoded key first, then bytewise ("rk" before "uv")
+        val enc = Cbor.encode(linkedMapOf<Any, Any>("uv" to true, "rk" to true, -1 to 0, 3 to 0))
+        val expected = byteArrayOf(0xA4.toByte(), 0x03, 0x00, 0x20, 0x00,
+            0x62, 'r'.code.toByte(), 'k'.code.toByte(), 0xF5.toByte(),
+            0x62, 'u'.code.toByte(), 'v'.code.toByte(), 0xF5.toByte())
+        assertArrayEquals(expected, enc)
+    }
+
+    @Test fun ctapAnswersGetInfo() {
+        val resp = it.snel.passkeychain.hybrid.CtapAuthenticator.handle(byteArrayOf(0x04)) { error("no choice for getInfo") }
+        assertEquals(0x00.toByte(), resp[0])
+        @Suppress("UNCHECKED_CAST")
+        val info = Cbor.decode(resp.copyOfRange(1, resp.size)) as Map<Any?, Any?>
+        assertTrue((info[1L] as List<*>).contains("FIDO_2_1"))
+        assertTrue(info[2L] == null) // no extensions advertised
+    }
+
     // Reference encoder matching FidoQr.digitsToBytes (7 bytes -> 17 digits LE + partials)
     private fun bytesToDigits(b: ByteArray): String {
         val tbl = mapOf(1 to 3, 2 to 5, 3 to 8, 4 to 10, 5 to 13, 6 to 15, 7 to 17)
