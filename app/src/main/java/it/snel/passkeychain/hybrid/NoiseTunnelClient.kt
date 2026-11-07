@@ -24,6 +24,7 @@ import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import it.snel.passkeychain.webauthn.Cbor
 
 /**
  * caBLE v2 tunnel client. WebSocket + Noise NKpsk0 responder, following
@@ -242,17 +243,26 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
         override fun receive(): ByteArray {
             if (!handshakeDone) {
+                Log.d(TAG, "receive(): handshake not done, running handshake")
                 handshake()
                 handshakeDone = true
             }
+            Log.d(TAG, "receive(): waiting up to 120s for transport record from Chrome")
             val record = incoming.poll(120, TimeUnit.SECONDS)
-                ?: throw HybridTransport.DeviceStageMissing("timeout waiting for transport record")
-            Log.d(TAG, "transport recv record ${record.size} bytes")
+                ?: run {
+                    Log.w(TAG, "receive(): timeout, no transport record from Chrome after post-handshake")
+                    throw HybridTransport.DeviceStageMissing("timeout waiting for transport record")
+                }
+            Log.d(TAG, "receive(): got transport record ${record.size} bytes: ${hex(record)}")
             // transport record: 2-byte BE length || ciphertext
             require(record.size >= 2) { "record too short" }
             val len = ((record[0].toInt() and 0xFF) shl 8) or (record[1].toInt() and 0xFF)
+            Log.d(TAG, "receive(): declared length = $len")
+            require(record.size >= 2 + len) { "record shorter than declared length" }
             val ct = record.copyOfRange(2, 2 + len)
-            return decryptTransport(ct)
+            val pt = decryptTransport(ct)
+            Log.d(TAG, "receive(): decrypted ${pt.size} bytes: ${hex(pt)}")
+            return pt
         }
 
         override fun send(plaintext: ByteArray) {
@@ -365,6 +375,31 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             rxKey = r
             Log.d(TAG, "split txKey = ${hex(t)}")
             Log.d(TAG, "split rxKey = ${hex(r)}")
+
+            // Per Chromium's v2_authenticator.cc OnTunnelData: after the handshake
+            // response (msg2), the authenticator sends a post-handshake message
+            // with its features and a CTAP2 getInfo response. Chrome will not
+            // send the actual CTAP2 command until it sees this.
+            val getInfo = Cbor.encode(linkedMapOf<Any, Any>(
+                1 to listOf("FIDO_2_0", "FIDO_2_1"),     // versions
+                2 to listOf("prf"),                       // extensions
+                3 to ByteArray(16),                       // aaguid
+                4 to linkedMapOf<Any, Any>("uv" to true, "rk" to true), // options
+                9 to listOf("cable", "hybrid", "internal") // transports
+            ))
+            val postHandshake = Cbor.encode(linkedMapOf<Any, Any>(
+                1 to getInfo,                             // getInfo, CBOR byte string
+                3 to listOf("ctap")                       // features
+            ))
+            Log.d(TAG, "post-handshake plaintext ${postHandshake.size} bytes: ${hex(postHandshake)}")
+            val postHandshakeCt = encryptTransport(postHandshake)
+            val postHandshakeRecord = byteArrayOf(
+                (postHandshakeCt.size ushr 8).toByte(),
+                (postHandshakeCt.size and 0xFF).toByte()
+            ) + postHandshakeCt
+            Log.d(TAG, "post-handshake record ${postHandshakeRecord.size} bytes: ${hex(postHandshakeRecord)}")
+            ws.send(okio.ByteString.of(*postHandshakeRecord))
+            Log.d(TAG, "post-handshake sent; waiting for CTAP2 request")
         }
 
         private fun encryptTransport(plaintext: ByteArray): ByteArray {
