@@ -199,6 +199,7 @@ private fun MainScreen(store: PasskeyStore) {
     var update by remember { mutableStateOf<UpdateUi?>(null) }
     var about by remember { mutableStateOf(false) }
     var exportChoice by remember { mutableStateOf(false) }
+    var importChoice by remember { mutableStateOf(false) }
     var exportPassword by remember { mutableStateOf<String?>(null) } // null: unencrypted
     var pendingImport by remember { mutableStateOf<PendingImport?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -260,7 +261,15 @@ private fun MainScreen(store: PasskeyStore) {
             snackbar.showSnackbar(msg)
         }
     }
-    val openImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
+    val importFile = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
+    val importFromApp: () -> Unit = {
+        scope.launch {
+            val msg = importFromAnotherApp(activity, store)
+            passkeys = withContext(Dispatchers.IO) { store.load() }
+            if (msg != null) snackbar.showSnackbar(msg)
+        }
+    }
+    val openImport = { importChoice = true }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val listState = rememberLazyListState()
@@ -281,21 +290,9 @@ private fun MainScreen(store: PasskeyStore) {
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, "More options") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
-                            text = { Text("Import from Bitwarden") },
+                            text = { Text("Import passkeys…") },
                             leadingIcon = { Icon(AppIcons.FileDownload, null) },
                             onClick = { menuOpen = false; openImport() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Import from another app") },
-                            leadingIcon = { Icon(AppIcons.FileDownload, null) },
-                            onClick = {
-                                menuOpen = false
-                                scope.launch {
-                                    val msg = importFromAnotherApp(activity, store)
-                                    passkeys = withContext(Dispatchers.IO) { store.load() }
-                                    if (msg != null) snackbar.showSnackbar(msg)
-                                }
-                            },
                         )
                         DropdownMenuItem(
                             text = { Text("Export") },
@@ -447,6 +444,12 @@ private fun MainScreen(store: PasskeyStore) {
             },
         )
     }
+
+    if (importChoice) ImportDialog(
+        onDismiss = { importChoice = false },
+        onFile = { importChoice = false; importFile() },
+        onApp = { importChoice = false; importFromApp() },
+    )
 
     if (exportChoice) ExportDialog(
         onDismiss = { exportChoice = false },
@@ -773,6 +776,34 @@ private fun DetailRow(
 private fun shortId(id: String): String = if (id.length <= 20) id else id.take(10) + "…" + id.takeLast(6)
 
 // ---- dialogs ------------------------------------------------------------------------
+
+/** Where to import from: a file (the format is recognised by its content) or another app on the phone. */
+@Composable
+private fun ImportDialog(onDismiss: () -> Unit, onFile: () -> Unit, onApp: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(AppIcons.FileDownload, null) },
+        title = { Text("Import passkeys") },
+        text = {
+            Column {
+                ListItem(
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onFile),
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("From a file") },
+                    supportingContent = { Text("A Bitwarden export (also password protected) or a Credential Exchange file") },
+                )
+                ListItem(
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onApp),
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("From another app") },
+                    supportingContent = { Text("A password manager on this phone that offers its passkeys for transfer") },
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
 
 @Composable
 private fun UpdateDialog(u: UpdateUi, current: String, onDismiss: () -> Unit, onInstall: (UpdateChecker.Release) -> Unit) {

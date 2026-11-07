@@ -86,7 +86,7 @@ GitHub release that the release app follows via `/releases/latest`.
 
 - **Bitwarden** JSON exports, unencrypted or password protected (below).
 - **Credential Exchange (CXF)** documents: the FIDO Alliance format for moving
-  passkeys between managers. *Import from another app* uses Android's
+  passkeys between managers. *Import passkeys… → From another app* uses Android's
   credential transfer (`androidx.credentials.providerevents`, beta) to fetch
   them from another manager on the phone that offers it; a CXF file can be
   imported like a Bitwarden file.
