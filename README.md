@@ -41,8 +41,9 @@ That is about 1000 lines of Kotlin in `hybrid/`.
 then sign in with the new passkey). A new passkey is backup-eligible but not backed up
 until it is exported to Bitwarden.
 
-**Sign-in history**: the last 200 sign-ins (site, account, time, outcome),
-encrypted on the phone; "last used" in the passkey details.
+**Activity log**: the last 200 sign-ins (site, account, time, outcome) and
+changes (passkeys created, deleted, imported, exported), encrypted on the
+phone; "last used" in the passkey details.
 
 ---
 
