@@ -598,6 +598,7 @@ private fun UpdateDialog(u: UpdateUi, current: String, onDismiss: () -> Unit, on
                     is UpdateUi.Downloading -> "Downloading update"
                     is UpdateUi.Result -> when (u.status) {
                         is UpdateChecker.Status.UpToDate -> "You're up to date"
+                        is UpdateChecker.Status.Building -> "Update on its way"
                         is UpdateChecker.Status.Available -> "Update available"
                         is UpdateChecker.Status.Error -> "Couldn't check for updates"
                     }
@@ -615,6 +616,8 @@ private fun UpdateDialog(u: UpdateUi, current: String, onDismiss: () -> Unit, on
                 is UpdateUi.Result -> Text(
                     when (val s = u.status) {
                         is UpdateChecker.Status.UpToDate -> "You have the newest version, $current."
+                        is UpdateChecker.Status.Building ->
+                            "Build ${s.build} is still being built on GitHub. Check again in a few minutes. You have $current."
                         is UpdateChecker.Status.Available -> "${s.release.label} is available. You have $current."
                         is UpdateChecker.Status.Error -> s.message
                     },

@@ -37,6 +37,8 @@ class UpdateChecker(private val context: Context) {
 
     sealed interface Status {
         data object UpToDate : Status
+        /** debug only: CI is still building [build], newer than this app; nothing to install yet */
+        data class Building(val build: Long) : Status
         data class Available(val release: Release) : Status
         data class Error(val message: String) : Status
     }
@@ -51,7 +53,11 @@ class UpdateChecker(private val context: Context) {
     suspend fun check(): Status = withContext(Dispatchers.IO) {
         try {
             val latest = if (BuildConfig.DEBUG) latestDebug() else latestRelease()
-            if (isNewer(latest)) Status.Available(latest) else Status.UpToDate
+            when {
+                isNewer(latest) -> Status.Available(latest)
+                BuildConfig.DEBUG -> buildInProgress()?.let { Status.Building(it) } ?: Status.UpToDate
+                else -> Status.UpToDate
+            }
         } catch (e: IOException) {
             Status.Error(e.message ?: "Network error")
         }
@@ -61,15 +67,25 @@ class UpdateChecker(private val context: Context) {
         if (r.build != null) r.build > currentBuild else Versions.isNewer(r.version, currentVersion)
 
     private fun latestDebug(): Release {
-        val conn = open("$REPO/releases/download/$DEBUG_TAG/passkeychain-debug.json")
-        conn.setRequestProperty("Cache-Control", "no-cache")
-        val body = try {
-            if (conn.responseCode == 404) throw IOException("No debug build has been published yet")
-            if (conn.responseCode !in 200..299) throw IOException("Unexpected answer from GitHub (HTTP ${conn.responseCode})")
-            conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-        } finally {
-            conn.disconnect()
+        // CI replaces the JSON with --clobber (delete, then upload): for a
+        // moment it is missing, so a 404 is tried again before believing it
+        var body: String? = null
+        for (attempt in 1..3) {
+            val conn = open("$REPO/releases/download/$DEBUG_TAG/passkeychain-debug.json")
+            conn.setRequestProperty("Cache-Control", "no-cache")
+            body = try {
+                when (conn.responseCode) {
+                    404 -> null
+                    in 200..299 -> conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+                    else -> throw IOException("Unexpected answer from GitHub (HTTP ${conn.responseCode})")
+                }
+            } finally {
+                conn.disconnect()
+            }
+            if (body != null) break
+            if (attempt < 3) Thread.sleep(2_000)
         }
+        if (body == null) throw IOException("No debug build has been published yet")
         return try {
             val o = JSONObject(body)
             Release(
@@ -81,6 +97,32 @@ class UpdateChecker(private val context: Context) {
         } catch (e: JSONException) {
             throw IOException("Invalid debug build information")
         }
+    }
+
+    /**
+     * The run number of a CI build of main that has not finished yet and is
+     * newer than this app, or null. Best effort through the public API (60
+     * requests an hour without a token); any failure just means "no".
+     */
+    private fun buildInProgress(): Long? = try {
+        val conn = open("$API/actions/runs?branch=main&event=push&per_page=5")
+        conn.setRequestProperty("Accept", "application/vnd.github+json")
+        try {
+            if (conn.responseCode !in 200..299) return null
+            val runs = JSONObject(conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
+                .getJSONArray("workflow_runs")
+            (0 until runs.length()).map { runs.getJSONObject(it) }
+                .filter { it.optString("status") != "completed" }
+                .map { it.getLong("run_number") }
+                .filter { it > currentBuild }
+                .maxOrNull()
+        } finally {
+            conn.disconnect()
+        }
+    } catch (e: IOException) {
+        null
+    } catch (e: JSONException) {
+        null
     }
 
     private fun latestRelease(): Release {
@@ -149,6 +191,7 @@ class UpdateChecker(private val context: Context) {
     companion object {
         const val REPO = "https://github.com/rsnel/passkeychain"
         const val DEBUG_TAG = "debug"
+        private const val API = "https://api.github.com/repos/rsnel/passkeychain"
     }
 }
 
