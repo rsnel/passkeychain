@@ -678,11 +678,21 @@ private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onC
     val red = Color(0xFFC62828)
     val grey = Color(0xFF8A8796)
     val indigo = Color(0xFF4A52B8)
+    var confirmClear by remember { mutableStateOf(false) }
+    if (confirmClear) AlertDialog(
+        onDismissRequest = { confirmClear = false },
+        title = { Text("Clear the activity log?") },
+        text = { Text("All ${entries.size} entries are deleted from this phone. This can't be undone.") },
+        confirmButton = {
+            TextButton(onClick = { confirmClear = false; onClear() }) { Text("Clear", color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
+    )
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Activity", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                if (entries.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear") }
+                if (entries.isNotEmpty()) TextButton(onClick = { confirmClear = true }) { Text("Clear") }
             }
             Text(
                 "The last ${HistoryEntry.MAX} sign-ins and changes to your passkeys, kept encrypted on this phone.",
