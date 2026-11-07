@@ -135,7 +135,12 @@ jobs:
             echo "::error::Signed release APK missing; add the signing secrets before tagging"
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" "passkeychain-$GITHUB_REF_NAME.apk" --generate-notes
+          # the tag may come from a release made on github.com: then add the APK to it
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "passkeychain-$GITHUB_REF_NAME.apk" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "passkeychain-$GITHUB_REF_NAME.apk" --generate-notes
+          fi
 
       # The pre-release 'debug' always holds the newest debug build of main:
       # passkeychain-debug.apk and passkeychain-debug.json, which the debug
