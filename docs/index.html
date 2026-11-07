@@ -85,9 +85,6 @@
   .flow-figure{background:#EEF0FF;border-radius:28px;padding:12px;margin:0 0 22px}
   @media (prefers-color-scheme: dark){ .flow-figure{background:#1d1a33} }
   .flow-figure img{width:100%;height:auto;display:block}
-  .legend{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 26px}
-  .chan{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;padding:6px 13px;border-radius:999px;background:var(--soft);border:1px solid var(--line)}
-  .chan i{width:10px;height:10px;border-radius:50%;display:inline-block}
   .flow{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(2,1fr);gap:16px;counter-reset:f}
   .flow li{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px 22px 20px 74px;position:relative}
   .flow li::before{counter-increment:f;content:counter(f);position:absolute;left:20px;top:20px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;background:var(--c)}
@@ -240,12 +237,6 @@
         <img src="assets/qr-signin-animated.svg" alt="An animation of the eight steps: the browser on a computer, the passkey app on a phone and a tunnel server on the internet, connected by the QR code (step 1), an encrypted tunnel (step 2) and Bluetooth (step 3). Through the tunnel the browser sends Hello (step 4) and Sign this? (step 6); the phone sends Hello back (step 5), you approve with your fingerprint (step 7), and the phone sends the signature (step 8), after which the browser is signed in." width="1000" height="865" loading="lazy">
       </picture>
     </figure>
-
-    <div class="legend">
-      <span class="chan"><i style="background:#4A52B8"></i>QR code: computer to phone, by camera</span>
-      <span class="chan"><i style="background:#3B82F6"></i>Bluetooth: short range, proves you are nearby</span>
-      <span class="chan"><i style="background:#F2B705"></i>Encrypted tunnel: over the internet</span>
-    </div>
 
     <ol class="flow">
       <li data-ch="qr">
