@@ -464,8 +464,13 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
             // bytes [plaintext.size .. paddedSize-2] are already zero
             padded[paddedSize - 1] = numZeros.toByte()
             Log.d(TAG, "encryptTransport: plaintext ${plaintext.size} -> padded ${paddedSize} (numZeros=$numZeros)")
+            // Chromium's ConstructNonce (v2_handshake.cc): 12-byte nonce,
+            // first 8 bytes zero, last 4 bytes big-endian counter.
             val nonceBytes = ByteArray(12)
-            for (i in 0..7) nonceBytes[i] = ((txNonce ushr (8 * i)) and 0xFF).toByte()
+            nonceBytes[8] = ((txNonce ushr 24) and 0xFF).toByte()
+            nonceBytes[9] = ((txNonce ushr 16) and 0xFF).toByte()
+            nonceBytes[10] = ((txNonce ushr 8) and 0xFF).toByte()
+            nonceBytes[11] = (txNonce and 0xFF).toByte()
             txNonce++
             val c = Cipher.getInstance("AES/GCM/NoPadding")
             c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceBytes))
@@ -474,8 +479,12 @@ class NoiseTunnelClient : HybridTransport.TunnelClient {
 
         private fun decryptTransport(ciphertext: ByteArray): ByteArray {
             val key = rxKey ?: throw IllegalStateException("no rx key")
+            // Chromium's ConstructNonce: last 4 bytes big-endian counter.
             val nonceBytes = ByteArray(12)
-            for (i in 0..7) nonceBytes[i] = ((rxNonce ushr (8 * i)) and 0xFF).toByte()
+            nonceBytes[8] = ((rxNonce ushr 24) and 0xFF).toByte()
+            nonceBytes[9] = ((rxNonce ushr 16) and 0xFF).toByte()
+            nonceBytes[10] = ((rxNonce ushr 8) and 0xFF).toByte()
+            nonceBytes[11] = (rxNonce and 0xFF).toByte()
             rxNonce++
             val c = Cipher.getInstance("AES/GCM/NoPadding")
             c.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonceBytes))
