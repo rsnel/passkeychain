@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.layout.ContentScale
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.sin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -786,10 +787,21 @@ class HybridSignInActivity : FragmentActivity() {
                     val pad = 10.dp.toPx()
                     val w = text.size.width + 2 * pad
                     val h = text.size.height + 2 * pad
-                    // one letter size for all three words, fitted to the longest
-                    val fit = bounds.width * 0.95f / (verifyingText.size.width + 2 * pad)
+                    // one letter size for all three words, fitted to the longest: as
+                    // wide as the code, but at least half the width of the picture
+                    val fullW = verifyingText.size.width + 2 * pad
+                    val fullH = verifyingText.size.height + 2 * pad
+                    val fit = maxOf(bounds.width * 0.95f, size.width * 0.5f) / fullW
                     val k = fit * factor
-                    val c = centre + Offset(dx, 0f)
+                    // keep the (rotated) stamp inside the picture: shift it from the
+                    // code's centre if it would cross an edge
+                    val angle = 14f * PI.toFloat() / 180f
+                    val halfW = (fullW * cos(angle) + fullH * sin(angle)) / 2 * fit
+                    val halfH = (fullW * sin(angle) + fullH * cos(angle)) / 2 * fit
+                    val margin = 8.dp.toPx()
+                    fun clampTo(v: Float, half: Float, extent: Float) =
+                        if (2 * (half + margin) >= extent) extent / 2 else v.coerceIn(half + margin, extent - half - margin)
+                    val c = Offset(clampTo(centre.x, halfW, size.width), clampTo(centre.y, halfH, size.height)) + Offset(dx, 0f)
                     withTransform({ rotate(-14f, c); scale(k, k, c) }) {
                         val topLeft = c - Offset(w / 2, h / 2)
                         drawRoundRect(Color.White.copy(alpha = 0.78f * alpha), topLeft, Size(w, h), CornerRadius(10.dp.toPx()))
