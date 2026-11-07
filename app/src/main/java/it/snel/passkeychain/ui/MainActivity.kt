@@ -630,7 +630,7 @@ private fun EmptyState(modifier: Modifier, onImport: () -> Unit) {
     }
 }
 
-/** The launcher icon, drawn from its two vector layers. */
+/** The launcher icon, drawn from its two layers (navy background, the shield picture). */
 @Composable
 private fun AppIcon(size: Dp) {
     Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.28f))) {

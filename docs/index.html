@@ -6,7 +6,6 @@
 <title>PassKeyChain — passkey sovereignty on Android</title>
 <meta name="description" content="Your passkeys, on a phone you choose, under your control. PassKeyChain is an open-source Android app that holds passkeys you own, signs you in with them on your computer (by QR code) and on the phone itself, and lets you take them with you in open formats. No account, no cloud, no telemetry.">
 <meta name="theme-color" content="#0B1E5B">
-<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon.png" type="image/png">
 <style>
   :root{
@@ -38,7 +37,7 @@
   .hero-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:40px;align-items:center}
   .hero h1{font-size:clamp(34px,5vw,52px);line-height:1.05;margin:0 0 14px;font-weight:800;letter-spacing:-.5px}
   .hero p.lede{font-size:19px;color:#dcd9ff;margin:0 0 28px;max-width:46ch}
-  .hero .logo{width:200px;height:200px;margin:0 auto;display:block;border-radius:30%;box-shadow:0 0 0 1px #ffffff40, 0 24px 60px rgba(20,10,60,.45)}
+  .hero .logo{width:auto;height:240px;margin:0 auto;display:block;filter:drop-shadow(0 22px 40px rgba(20,10,60,.45))}
   .cta{display:flex;gap:12px;flex-wrap:wrap}
   .pills{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
   .pill{font-size:13px;background:#ffffff1a;border:1px solid #ffffff2e;color:#eceaff;padding:5px 12px;border-radius:999px}
@@ -83,7 +82,7 @@
   @media (max-width:860px){
     .hero-grid,.features,.shot-row,.shot-row.two,.steps{grid-template-columns:1fr}
     .shot-row.two{max-width:none}
-    .hero .logo{width:130px;height:130px}
+    .hero .logo{height:160px}
     .hero-media{order:-1}
   }
 
@@ -100,14 +99,14 @@
   /* every step its own colour (as in the animation); the dot on the route line shows the channel */
   .flow li:nth-child(1){--c:#6C4CE0} .flow li:nth-child(2){--c:#F2B705} .flow li:nth-child(3){--c:#2F80ED}
   .flow li:nth-child(4){--c:#12A4A0} .flow li:nth-child(5){--c:#E8772E} .flow li:nth-child(6){--c:#D6336C}
-  .flow li:nth-child(7){--c:#1E9E5A}
-  .flow li:nth-child(2)::before{color:#14121F}
-  .flow li[data-ch=qr]{--ch:#4A52B8} .flow li[data-ch=bt]{--ch:#3B82F6} .flow li[data-ch=tun]{--ch:#F2B705}
+  .flow li:nth-child(7){--c:#84B819} .flow li:nth-child(8){--c:#1E9E5A}
+  .flow li:nth-child(2)::before,.flow li:nth-child(7)::before{color:#14121F}
+  .flow li[data-ch=qr]{--ch:#4A52B8} .flow li[data-ch=bt]{--ch:#3B82F6} .flow li[data-ch=tun]{--ch:#F2B705} .flow li[data-ch=you]{--ch:#84B819}
   .flow h3{margin:0 0 4px;font-size:17px}
   .flow .route{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px}
   .flow .route i{width:9px;height:9px;border-radius:50%;display:inline-block;background:var(--ch);margin-right:6px;vertical-align:1px}
   .flow p{margin:0;color:var(--muted);font-size:15px}
-  .flow li.done{grid-column:1/-1;background:linear-gradient(135deg,#E8FBF3,#EEF0FF);border-color:#bfe9d6}
+  .flow li.done{background:linear-gradient(135deg,#E8FBF3,#EEF0FF);border-color:#bfe9d6}
   @media (prefers-color-scheme: dark){ .flow li.done{background:linear-gradient(135deg,#123528,#1d1a33);border-color:#24533f} }
   .flow li.done h3::after{content:" \2714\FE0F"}
   .safe{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:22px}
@@ -136,7 +135,7 @@
       </div>
     </div>
     <div class="hero-media">
-      <img class="logo" src="assets/logo.svg" alt="PassKeyChain logo: a blue shield with a crown, and three keys on a ring, on a deep navy field">
+      <img class="logo" src="assets/logo.png" width="320" height="442" alt="PassKeyChain logo: a blue shield with a crown, and three keys on a ring">
     </div>
   </div>
 </header>
@@ -259,10 +258,10 @@
     <p class="sub">When a website asks your computer for a passkey that lives on your phone, the computer shows a QR code. You scan it, and a few seconds later you are signed in on the computer, without the private key ever leaving your phone. This is an open standard: the browser does not care which app on which phone answers, as long as it holds the key. That is what lets you choose. This is what happens in between.</p>
 
     <figure class="flow-figure">
-      <!-- the animation plays the seven steps; with "reduce motion" the still picture is shown -->
+      <!-- the animation plays the eight steps; with "reduce motion" the still picture is shown -->
       <picture>
         <source media="(prefers-reduced-motion: reduce)" srcset="assets/qr-signin.svg">
-        <img src="assets/qr-signin-animated.svg" alt="An animation of the seven steps: the browser on a computer, the passkey app on a phone and a tunnel server on the internet, connected by the QR code (step 1), an encrypted tunnel (step 2) and Bluetooth (step 3). Through the tunnel the browser sends Hello (step 4) and Sign this? (step 6); the phone sends Hello back (step 5) and, after a fingerprint unlock, the signature (step 7), after which the browser is signed in." width="1000" height="865" loading="lazy">
+        <img src="assets/qr-signin-animated.svg" alt="An animation of the eight steps: the browser on a computer, the passkey app on a phone and a tunnel server on the internet, connected by the QR code (step 1), an encrypted tunnel (step 2) and Bluetooth (step 3). Through the tunnel the browser sends Hello (step 4) and Sign this? (step 6); the phone sends Hello back (step 5), you approve with your fingerprint (step 7), and the phone sends the signature (step 8), after which the browser is signed in." width="1000" height="865" loading="lazy">
       </picture>
     </figure>
 
@@ -301,7 +300,12 @@
       <li data-ch="tun">
         <h3>The browser asks for a signature</h3>
         <div class="route"><i></i>Computer → phone · through the tunnel</div>
-        <p>It sends the name of the website and a random challenge from that website. The phone finds the passkey for that website and asks you to unlock, with your fingerprint or PIN.</p>
+        <p>It sends the name of the website and a random challenge from that website. The phone looks up which of your passkeys belong to that website.</p>
+      </li>
+      <li data-ch="you">
+        <h3>You approve</h3>
+        <div class="route"><i></i>On the phone · your fingerprint, face or PIN</div>
+        <p>The phone shows which website and which account want to sign in, and asks you to unlock. Nothing is signed until you do. Cancel, and the browser simply gets a “no”. With more than one passkey for the site, you pick which one.</p>
       </li>
       <li data-ch="tun" class="done">
         <h3>The phone sends the signature: finished!</h3>
@@ -316,7 +320,7 @@
       <div class="card"><div class="ic">🔗</div><h3>Tied to the real website</h3><p>The browser only asks for a signature for the website you are actually on, and the signature covers that website’s name, so a look-alike site cannot use it.</p></div>
     </div>
 
-    <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the open protocol that Android phones and iPhones use for this. Because it is open, an independent app can speak it too: PassKeyChain does all seven steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way. Passkey sovereignty in practice: your key, your phone, the same front door as everyone else.</p>
+    <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the open protocol that Android phones and iPhones use for this. Because it is open, an independent app can speak it too: PassKeyChain does all eight steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way. Passkey sovereignty in practice: your key, your phone, the same front door as everyone else.</p>
   </div>
 </section>
 
