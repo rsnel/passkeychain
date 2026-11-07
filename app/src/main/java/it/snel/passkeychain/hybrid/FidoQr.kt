@@ -26,8 +26,24 @@ data class FidoQr(
     val stateAssisted: Boolean,
     val hint: String,
 ) {
+    /**
+     * Why this QR code should not be used at [nowSeconds] (unix time), or null.
+     * The browser writes the time into the code; one that is much older was
+     * probably photographed or kept around, not just shown by the computer.
+     * A code from the future is accepted: the computer's clock may be ahead.
+     */
+    fun staleness(nowSeconds: Long): String? {
+        if (timestamp <= 0) return null // older browsers may leave it out
+        val minutes = (nowSeconds - timestamp) / 60
+        return if (minutes > MAX_AGE_MINUTES)
+            "This QR code is $minutes minutes old. Start the sign-in again on the computer and scan the new code."
+        else null
+    }
+
     companion object {
         private const val PREFIX = "FIDO:/"
+        /** generous: a sign-in dialog can stay open a while, and clocks differ a little */
+        const val MAX_AGE_MINUTES = 20L
 
         fun isFidoQr(text: String): Boolean = text.trim().startsWith(PREFIX)
 

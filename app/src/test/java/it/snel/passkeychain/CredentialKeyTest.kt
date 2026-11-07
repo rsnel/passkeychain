@@ -253,6 +253,16 @@ class CredentialKeyTest {
         assertTrue("hybrid assertion signature must verify", v.verify(sig))
     }
 
+    @Test fun staleQrCodesAreRefused() {
+        fun qr(time: Long) = FidoQr(ByteArray(33), ByteArray(16), 2, time, false, "ga")
+        val now = 1_800_000_000L
+        assertEquals(null, qr(now - 60).staleness(now))            // a minute old: fine
+        assertEquals(null, qr(now + 600).staleness(now))           // computer clock ahead: fine
+        assertEquals(null, qr(0).staleness(now))                   // no time in the code: fine
+        val msg = qr(now - 45 * 60).staleness(now)
+        assertTrue(msg != null && msg.contains("45 minutes old"))
+    }
+
     @Test fun cborMapsAreWrittenInCanonicalOrder() {
         // CTAP2 canonical: shorter encoded key first, then bytewise ("rk" before "uv")
         val enc = Cbor.encode(linkedMapOf<Any, Any>("uv" to true, "rk" to true, -1 to 0, 3 to 0))

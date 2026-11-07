@@ -26,6 +26,11 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -161,6 +166,11 @@ class HybridSignInActivity : FragmentActivity() {
     }
     private val failed get() = states.any { it is State.Failed }
 
+    /** "Remove animations" (accessibility) or animator duration scale 0 in the developer options */
+    private val reduceMotion by lazy {
+        android.provider.Settings.Global.getFloat(contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    }
+
     // ---- camera ---------------------------------------------------------------------
 
     private lateinit var previewView: PreviewView
@@ -280,6 +290,7 @@ class HybridSignInActivity : FragmentActivity() {
                     .onFailure { Dbg.w(TAG, "FIDO QR not readable: ${it.message}") }
                     .getOrNull()
                 if (qr == null) { scanHint = "That sign-in QR code could not be read. Hold the phone steady and keep scanning."; return@addOnSuccessListener }
+                qr.staleness(System.currentTimeMillis() / 1000)?.let { scanHint = it; return@addOnSuccessListener }
                 scanned = true
                 scannedQr = qr
                 frozen = runCatching { freeze(code, imageW, imageH) }.getOrNull() // before the camera stops
@@ -506,7 +517,20 @@ class HybridSignInActivity : FragmentActivity() {
     private fun StepRow(step: Step, title: String, detail: String) {
         val state = states[step.ordinal]
         val scheme = MaterialTheme.colorScheme
-        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.Top) {
+        // TalkBack: one item per step, with its state; a failure is announced as it happens
+        val spokenState = when (state) {
+            State.Pending -> "waiting"
+            State.Active -> "in progress"
+            State.Done -> "done"
+            is State.Failed -> "failed"
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 7.dp).semantics(mergeDescendants = true) {
+                stateDescription = spokenState
+                if (state is State.Failed) liveRegion = LiveRegionMode.Assertive
+            },
+            verticalAlignment = Alignment.Top,
+        ) {
             Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
                 when (state) {
                     State.Pending -> Box(Modifier.size(22.dp).border(2.dp, scheme.outlineVariant, CircleShape))
@@ -559,6 +583,7 @@ class HybridSignInActivity : FragmentActivity() {
     private fun Magic(f: Frozen, verdict: Verdict) {
         var time by remember { mutableFloatStateOf(0f) }
         LaunchedEffect(verdict) {
+            if (reduceMotion) return@LaunchedEffect // a still picture: no shimmer, no pulse
             // the clock runs while verifying, and a little longer for the verdict's entrance
             val start = withFrameNanos { it } - (time * 1e9).toLong()
             val until = if (verdict == Verdict.Verifying) Float.MAX_VALUE else time + 1.5f
@@ -568,6 +593,7 @@ class HybridSignInActivity : FragmentActivity() {
         val land = remember { Animatable(1f) }
         LaunchedEffect(verdict) {
             if (verdict == Verdict.Verifying) return@LaunchedEffect
+            if (reduceMotion) { land.snapTo(1f); return@LaunchedEffect }
             land.snapTo(0f)
             land.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
         }
@@ -588,7 +614,15 @@ class HybridSignInActivity : FragmentActivity() {
             val rnd = java.util.Random(7)
             List(12) { Sparkle(rnd.nextFloat(), 6f + 22f * rnd.nextFloat(), 5f + 6f * rnd.nextFloat(), rnd.nextFloat(), 0.35f + 0.4f * rnd.nextFloat()) }
         }
-        Box(Modifier.fillMaxSize()) {
+        val spoken = when (verdict) {
+            Verdict.Verifying -> "Scanned sign-in QR code. Verifying."
+            Verdict.Approved -> "Scanned sign-in QR code. Approved: you are signed in on the computer."
+            Verdict.Denied -> "Scanned sign-in QR code. Denied."
+        }
+        Box(Modifier.fillMaxSize().semantics {
+            contentDescription = spoken
+            liveRegion = LiveRegionMode.Polite
+        }) {
             Image(f.image, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             Canvas(Modifier.fillMaxSize().graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)) {
                 // the picture was taken at the view's size; scale in case the layout changed since
@@ -682,7 +716,7 @@ class HybridSignInActivity : FragmentActivity() {
                 }
 
                 // the pulsing VERIFYING stamp, on top of the shimmer
-                val beat = 0.5f + 0.5f * sin(time * 2f * PI.toFloat() / 1.1f)
+                val beat = if (reduceMotion) 1f else 0.5f + 0.5f * sin(time * 2f * PI.toFloat() / 1.1f)
                 stamp(verifyingText, yellow, 0.97f + 0.06f * beat, 0.55f + 0.45f * beat)
             }
         }

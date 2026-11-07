@@ -172,49 +172,17 @@ class NoiseTunnelClient(private val onHandshakeDone: () -> Unit = {}) : HybridTr
                     throw SignInFailure("Could not read the computer's message. Scan a fresh QR code to try again.", e)
                 }
                 Dbg.d(TAG, "receive(): decrypted ${pt.size} bytes: ${hex(pt)}")
-                if (pt.isEmpty()) {
-                    Dbg.w(TAG, "receive(): empty plaintext, continuing")
-                    continue
+                when (val m = TunnelMessages.classify(pt)) {
+                    is TunnelMessages.Incoming.Ctap -> {
+                        Dbg.d(TAG, "receive(): CTAP2 command 0x%02x".format(m.command[0]))
+                        return m.command
+                    }
+                    TunnelMessages.Incoming.Shutdown -> {
+                        Dbg.w(TAG, "receive(): kShutdown from Chrome")
+                        throw SignInFailure("The sign-in was cancelled on the computer.")
+                    }
+                    is TunnelMessages.Incoming.Ignore -> Dbg.d(TAG, "receive(): ignoring: ${m.why}")
                 }
-                val first = pt[0].toInt() and 0xFF
-                val second = if (pt.size >= 2) pt[1].toInt() and 0xFF else -1
-                val secondIsCborMap = second in 0xA0..0xBF
-                Dbg.d(TAG, "receive(): first=0x%02x second=0x%02x cborMap=%b size=${pt.size}".format(first, second and 0xFF, secondIsCborMap))
-
-                // kShutdown: 1-byte message 0x02 (MessageType::kShutdown)
-                if (pt.size == 1 && first == 0x02) {
-                    Dbg.w(TAG, "receive(): kShutdown from Chrome")
-                    throw SignInFailure("The sign-in was cancelled on the computer.")
-                }
-                // kUpdate: 1-byte message 0x03
-                if (pt.size == 1 && first == 0x03) {
-                    Dbg.d(TAG, "receive(): kUpdate, ignoring")
-                    continue
-                }
-                // authenticatorGetInfo has no parameters: a bare 0x04
-                if (pt.size == 1 && first == CtapAuthenticator.CMD_GET_INFO) {
-                    Dbg.d(TAG, "receive(): bare CTAP2 getInfo")
-                    return pt
-                }
-                // MessageType::kCTAP (0x00) prefix, followed by a CTAP2 command byte
-                if (first == 0x00 && pt.size >= 2 && second in 0x01..0x04) {
-                    Dbg.d(TAG, "receive(): MessageType=kCTAP prefix, CTAP2 cmd=0x%02x".format(second))
-                    return pt.copyOfRange(1, pt.size)
-                }
-                // Bare CTAP2 command: first byte is 0x01/0x02/0x04 followed by CBOR map.
-                // Chrome in some configurations sends CTAP2 requests without the
-                // MessageType prefix (observed for kAuthenticatorGetAssertion).
-                if (first in 0x01..0x04 && secondIsCborMap) {
-                    Dbg.d(TAG, "receive(): bare CTAP2 cmd=0x%02x (no MessageType prefix)".format(first))
-                    return pt
-                }
-                // kJSON prefix with non-CBOR payload: ignore
-                if (first == 0x01) {
-                    Dbg.d(TAG, "receive(): kJSON prefix, ignoring")
-                    continue
-                }
-                Dbg.w(TAG, "receive(): unrecognized message (first=0x%02x size=${pt.size}), discarding".format(first))
-                continue
             }
         }
 
