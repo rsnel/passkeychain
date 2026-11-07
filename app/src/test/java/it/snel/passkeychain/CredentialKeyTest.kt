@@ -2,7 +2,7 @@ package it.snel.passkeychain
 
 import it.snel.passkeychain.hybrid.FidoQr
 import it.snel.passkeychain.hybrid.HybridTransport
-import it.snel.passkeychain.io.KeePassXc
+import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.util.B64
 import it.snel.passkeychain.webauthn.Assertion
 import it.snel.passkeychain.webauthn.Cbor
@@ -24,7 +24,7 @@ import java.util.Random
 /**
  * Re-verifies on every CI run the correctness-critical logic that cannot be
  * exercised on this build machine (no Android build): key decoding across
- * encodings, ES256 assertion signing, the FIDO QR digit packing, KeePassXC
+ * encodings, ES256 assertion signing, the FIDO QR digit packing, Bitwarden
  * import/export round-trip, and the hybrid getAssertion assembly.
  */
 class CredentialKeyTest {
@@ -117,39 +117,99 @@ class CredentialKeyTest {
         assertEquals("ga", parsed.hint)
     }
 
-    @Test fun keePassXcRoundTrip() {
+    /** One passkey as Bitwarden writes it: GUID credentialId, base64url key and user handle, string counters. */
+    private fun bitwardenCredential(priv: ECPrivateKey, credentialId: String): JSONObject = JSONObject()
+        .put("credentialId", credentialId)
+        .put("keyType", "public-key").put("keyAlgorithm", "ECDSA").put("keyCurve", "P-256")
+        .put("keyValue", B64.url(priv.encoded))
+        .put("rpId", "login.microsoft.com")
+        .put("userHandle", B64.url("lasjksdkjfhsdkj".toByteArray()))
+        .put("userName", "r.snel@asg.nl")
+        .put("counter", "0")
+        .put("rpName", "Microsoft")
+        .put("userDisplayName", "Rik Snel")
+        .put("discoverable", "true")
+        .put("creationDate", "2026-09-16T06:32:48.156Z")
+
+    private fun bitwardenExport(vararg creds: JSONObject): String = JSONObject()
+        .put("encrypted", false)
+        .put("folders", org.json.JSONArray())
+        .put("items", org.json.JSONArray().put(JSONObject()
+            .put("type", 1).put("name", "Microsoft")
+            .put("login", JSONObject()
+                .put("username", "r.snel@asg.nl")
+                .put("fido2Credentials", org.json.JSONArray().apply { creds.forEach { put(it) } }))))
+        .toString()
+
+    @Test fun bitwardenFullExportImports() {
         val (priv, _) = freshKey()
-        val json = JSONObject().put(
-            "fido2Credentials",
-            org.json.JSONArray().put(
-                JSONObject()
-                    .put("credentialId", B64.std(ByteArray(20) { it.toByte() }))
-                    .put("keyType", "public-key").put("keyAlgorithm", "ECDSA").put("keyCurve", "P-256")
-                    .put("keyValue", toPem(priv.encoded))
-                    .put("rpId", "login.microsoft.com").put("rpName", "Microsoft")
-                    .put("userHandle", B64.std("lasjksdkjfhsdkj".toByteArray()))
-                    .put("userName", "r.snel@asg.nl").put("userDisplayName", "Rik Snel")
-                    .put("counter", "0").put("discoverable", "true")
-            )
-        ).toString()
-
-        val imported = KeePassXc.parse(json)
-        assertEquals(1, imported.imported.size)
-        val pk = imported.imported[0]
-        // canonical key must decode to the same private scalar
+        val guid = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+        val res = Bitwarden.parse(bitwardenExport(bitwardenCredential(priv, guid)))
+        assertEquals(1, res.imported.size)
+        val pk = res.imported.single()
+        // a GUID credentialId stands for its 16 bytes, in order
+        assertArrayEquals(Bitwarden.credentialIdBytes(guid), B64.dUrl(pk.credentialId))
+        assertEquals(0x0f.toByte(), B64.dUrl(pk.credentialId)[0])
+        assertEquals(16, B64.dUrl(pk.credentialId).size)
         assertEquals(priv.s, CredentialKey.decodePrivate(pk.keyValuePkcs8).s)
+        assertArrayEquals("lasjksdkjfhsdkj".toByteArray(), B64.dUrl(pk.userHandle))
+        assertEquals("login.microsoft.com", pk.rpId)
+        assertEquals("Rik Snel", pk.userDisplayName)
+    }
 
-        // export then re-import must preserve the key and ids
-        val exported = KeePassXc.export(listOf(pk))
-        val again = KeePassXc.parse(exported).imported.single()
-        assertEquals(pk.credentialId, again.credentialId)
-        assertEquals(pk.userHandle, again.userHandle)
-        assertEquals(CredentialKey.decodePrivate(pk.keyValuePkcs8).s, CredentialKey.decodePrivate(again.keyValuePkcs8).s)
+    @Test fun bitwardenB64PrefixedCredentialId() {
+        val (priv, _) = freshKey()
+        val id = ByteArray(20) { (it * 7).toByte() }
+        val pk = Bitwarden.parse(bitwardenExport(bitwardenCredential(priv, "b64." + B64.url(id)))).imported.single()
+        assertArrayEquals(id, B64.dUrl(pk.credentialId))
+    }
+
+    @Test fun bitwardenRoundTrip() {
+        val (priv, _) = freshKey()
+        val guid = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+        val long = ByteArray(32) { it.toByte() }
+        val pks = Bitwarden.parse(bitwardenExport(
+            bitwardenCredential(priv, guid), bitwardenCredential(priv, "b64." + B64.url(long)).put("userName", "other"),
+        )).imported
+        val exported = Bitwarden.export(pks)
+        // Bitwarden's own encodings: GUID or b64. id, base64url key, items with logins
+        val items = JSONObject(exported).getJSONArray("items")
+        val all = (0 until items.length()).flatMap { i ->
+            val c = items.getJSONObject(i).getJSONObject("login").getJSONArray("fido2Credentials")
+            (0 until c.length()).map { c.getJSONObject(it) }
+        }
+        assertEquals(setOf(guid, "b64." + B64.url(long)), all.map { it.getString("credentialId") }.toSet())
+        all.forEach { c ->
+            val k = c.getString("keyValue")
+            assertTrue("keyValue must be base64url", k.none { it == '=' || it == '+' || it == '/' } && !k.contains("BEGIN"))
+            assertEquals("0", c.getString("counter"))
+            assertEquals("true", c.getString("discoverable"))
+        }
+        val again = Bitwarden.parse(exported).imported
+        assertEquals(pks.map { it.credentialId }.toSet(), again.map { it.credentialId }.toSet())
+        again.forEach { assertEquals(priv.s, CredentialKey.decodePrivate(it.keyValuePkcs8).s) }
+    }
+
+    @Test fun pastedSnippetImports() {
+        // just the "fido2Credentials" part of an export, like the original passkey.txt
+        val (priv, _) = freshKey()
+        val snippet = "\"fido2Credentials\": [" + bitwardenCredential(priv, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0") + "]"
+        assertEquals(1, Bitwarden.parse(snippet).imported.size)
+    }
+
+    @Test fun olderPemExportStillImports() {
+        val (priv, _) = freshKey()
+        val json = JSONObject().put("fido2Credentials", org.json.JSONArray().put(
+            bitwardenCredential(priv, B64.std(ByteArray(20) { it.toByte() })).put("keyValue", toPem(priv.encoded)),
+        )).toString()
+        val pk = Bitwarden.parse(json).imported.single()
+        assertEquals(priv.s, CredentialKey.decodePrivate(pk.keyValuePkcs8).s)
+        assertArrayEquals(ByteArray(20) { it.toByte() }, B64.dUrl(pk.credentialId))
     }
 
     @Test fun redactedKeyIsRejected() {
-        val json = """{"fido2Credentials":[{"credentialId":"AAAA","keyValue":"secret","rpId":"x"}]}"""
-        val res = KeePassXc.parse(json)
+        val json = """{"items":[{"login":{"fido2Credentials":[{"credentialId":"XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX","keyValue":"secret","rpId":"x"}]}}]}"""
+        val res = Bitwarden.parse(json)
         assertEquals(0, res.imported.size)
         assertEquals(1, res.skipped.size)
     }

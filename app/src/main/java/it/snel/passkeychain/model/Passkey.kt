@@ -4,7 +4,7 @@ import org.json.JSONObject
 
 /**
  * A single stored passkey (FIDO2 discoverable credential) together with the
- * imported private key material. Mirrors the fields of the KeePassXC passkey
+ * imported private key material. Mirrors the fields of the Bitwarden passkey
  * export format so import/export is lossless.
  *
  * [keyValuePkcs8] always holds the private key as base64 (standard) of its

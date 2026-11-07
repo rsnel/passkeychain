@@ -1,19 +1,39 @@
 {
-  "fido2Credentials": [
-    {
-      "credentialId": "nTtiNx1qeVf82KxT5GcvCA==",
-      "keyType": "public-key",
-      "keyAlgorithm": "ECDSA",
-      "keyCurve": "P-256",
-      "keyValue": "-----BEGIN PRIVATE KEY-----\nMEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCB8MPc0Eb51UK1xeL1o\nnbsAUFqoA8UHRnVi5sW+N+GUYg==\n-----END PRIVATE KEY-----\n",
-      "rpId": "login.microsoft.com",
-      "rpName": "Microsoft",
-      "userHandle": "KC19TNgEhDMh9gVwHWd1/A==",
-      "userName": "demo@example.com",
-      "userDisplayName": "Demo User",
-      "counter": "0",
-      "discoverable": "true",
-      "creationDate": "2026-01-01T00:00:00.000Z"
-    }
-  ]
+  "folders": [],
+  "encrypted": false,
+  "items": [{
+    "organizationId": null,
+    "reprompt": 0,
+    "notes": null,
+    "collectionIds": null,
+    "name": "Microsoft",
+    "id": "2c0feba1-5920-4269-9682-d649c82c3c77",
+    "type": 1,
+    "login": {
+      "uris": [{
+        "match": null,
+        "uri": "https://login.microsoft.com"
+      }],
+      "totp": null,
+      "password": null,
+      "fido2Credentials": [{
+        "userHandle": "5RvIn0miFv2AJdQeeOZsxA",
+        "keyAlgorithm": "ECDSA",
+        "keyCurve": "P-256",
+        "keyValue": "MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCAmsFDeYBpZfcIrll_4I4IZr_YGkvJdWgD4NXTp-n_oSg",
+        "userDisplayName": "Demo User",
+        "counter": "0",
+        "rpId": "login.microsoft.com",
+        "userName": "demo@example.com",
+        "creationDate": "2026-01-01T00:00:00.000Z",
+        "discoverable": "true",
+        "credentialId": "f1009e1a-a69e-fd7f-6ead-0f8c502402e7",
+        "keyType": "public-key",
+        "rpName": "Microsoft"
+      }],
+      "username": "demo@example.com"
+    },
+    "favorite": false,
+    "folderId": null
+  }]
 }
