@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import it.snel.passkeychain.store.SignInHistory
 import it.snel.passkeychain.model.HistoryEntry
 import androidx.compose.ui.semantics.semantics
@@ -512,7 +515,7 @@ private fun PasskeyList(
         ),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        item(key = "summary") { SummaryCard(passkeys.size) }
+        item(key = "summary") { SummaryLine(passkeys) }
         groups.forEach { (rpId, items) ->
             item(key = "h:$rpId") {
                 val name = items.first().rpName.ifBlank { rpId }
@@ -543,31 +546,23 @@ private fun segmentShape(index: Int, count: Int): RoundedCornerShape {
 }
 
 @Composable
-private fun SummaryCard(count: Int) {
-    Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) { Icon(AppIcons.Shield, null, tint = MaterialTheme.colorScheme.onPrimary) }
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text(
-                    if (count == 1) "1 passkey" else "$count passkeys",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-                Text(
-                    "Encrypted with the Android Keystore. Private keys never leave this phone.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-                )
-            }
-        }
+private fun SummaryLine(passkeys: List<Passkey>) {
+    // one quiet line: how many, where they are kept, and whether some still need a backup
+    val notBackedUp = passkeys.count { !it.backedUp }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(AppIcons.Shield, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            buildAnnotatedString {
+                append(if (passkeys.size == 1) "1 passkey" else "${passkeys.size} passkeys")
+                append(" · encrypted on this phone")
+                if (notBackedUp > 0) withStyle(SpanStyle(color = MaterialTheme.colorScheme.error)) {
+                    append(" · $notBackedUp not backed up yet")
+                }
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -615,7 +610,7 @@ private fun EmptyState(modifier: Modifier, onImport: () -> Unit) {
         Text("No passkeys yet", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp))
         Text(
-            "Import the passkeys from a Bitwarden export (unencrypted .json). They are encrypted with the Android Keystore and never leave this phone.",
+            "Import your passkeys from a Bitwarden export or from another app. They are kept encrypted on this phone, and leave it only in an export you make.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
