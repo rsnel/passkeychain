@@ -145,8 +145,8 @@ def between(a, b, fade=.25):
             f"dur='{T}s' repeatCount='indefinite'/>")
 
 def computer_screen(qr_line):
-    """steps 1-3 the QR, 4-6 connecting, 7 approve on the phone, 8 access granted (when the 8 arrives)"""
-    s4, s7 = WIN[4][0], WIN[7][0]
+    """steps 1-3 the QR, 4-5 connecting, 6-7 approve on the phone (the browser has asked), 8 access granted (when the 8 arrives)"""
+    s4, s6 = WIN[4][0], WIN[6][0]
     a8 = arrival8()
     T_ = lambda x, y, t, size=10, col='#2D2F45', w=800: (f"<text x='{x}' y='{y}' text-anchor='middle' {FONT} "
                                                          f"font-size='{size}' font-weight='{w}' fill='{col}'>{t}</text>")
@@ -156,14 +156,14 @@ def computer_screen(qr_line):
     out.append(f"<g><animate attributeName='opacity' values='1;1;0;0;1;1' keyTimes='0;{f(s4-.1)};{f(s4+.15)};{f(END)};{f(END+.2)};1' "
                f"dur='{T}s' repeatCount='indefinite'/>{qr_line}</g>")
     # connecting to your phone
-    out.append(f"<g opacity='0'>{between(s4, s7)}{bg}"
+    out.append(f"<g opacity='0'>{between(s4, s6)}{bg}"
                "<rect x='263' y='313' width='16' height='27' rx='3.5' fill='none' stroke='#4A52B8' stroke-width='2.4'/>"
                "<g fill='#4A52B8'>" + ''.join(
                    f"<circle cx='{259 + j*8}' cy='326.5' r='1.8'><animate attributeName='opacity' values='.2;1;.2' "
                    f"dur='1s' begin='{j*.33:.2f}s' repeatCount='indefinite'/></circle>" for j in (-1, 3)) + "</g>"
                + T_(271, 357, 'Connecting to') + T_(271, 370, 'your phone…') + "</g>")
     # approve on your phone
-    out.append(f"<g opacity='0'>{between(s7, a8)}{bg}"
+    out.append(f"<g opacity='0'>{between(s6, a8)}{bg}"
                f"<circle cx='271' cy='328' r='13' fill='{STEP[7]}'/>"
                "<g transform='translate(271 326)' stroke='#1B1B21' stroke-width='1.8' fill='none' stroke-linecap='round'>"
                "<path d='M-3,4 a3,3 0 0 1 6,0'/><path d='M-6,4 a6,6 0 0 1 12,0'/><path d='M-9,4 a9,9 0 0 1 18,0'/>"
