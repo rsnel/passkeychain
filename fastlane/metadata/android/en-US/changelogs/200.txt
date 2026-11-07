@@ -1,6 +1,4 @@
-First release.
-- Import passkeys from Bitwarden (also password protected) and Credential Exchange; export to Bitwarden
-- Sign in and create passkeys on a computer by scanning its QR code
-- Passkey provider on the phone (Android 14+)
-- Activity log
-- Choose the tunnel server, including your own
+- The phone stays awake while scanning and signing in, so the approval prompt is not lost
+- Tunnel server picker: full width, Apple's public server listed, Google's server as default fallback
+- A server the computer's browser doesn't know is skipped, with a clear message if none is left
+- Clearing the activity log asks for confirmation
