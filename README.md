@@ -1,9 +1,10 @@
 # PassKeyChain
 
 An open-source Android app that **imports your FIDO2 passkeys**, stores the
-private keys in Android Keystore-encrypted storage, uses them to sign in — both
-on-device (as a system passkey provider) and across devices (by scanning a
-sign-in QR) — and can **export** them again. It keeps itself up to date from
+private keys in Android Keystore-encrypted storage, uses them to sign in — on a
+computer by scanning its sign-in QR code (the FIDO hybrid transport: Bluetooth
+plus an encrypted tunnel), and on the phone itself as a system passkey
+provider — and can **export** them again. It keeps itself up to date from
 GitHub Releases.
 
 > PassKeyChain manages credentials **you already own**. Keys never leave your
@@ -24,15 +25,15 @@ Website / screenshots: **https://rsnel.github.io/passkeychain/**
 - FIDO `FIDO:/` hybrid **QR decoding** (base-10 digit packing + CBOR)
 - Keystore-encrypted storage, Jetpack Compose UI, self-update channel logic
 
-**In progress — needs a physical device to finish:**
+**Cross-device sign-in works** (tested end to end against a real Microsoft
+sign-in):
 
-- The hybrid/caBLE **BLE proximity advertisement**
-- The **Noise-encrypted relay tunnel** (CTAP2 over the tunnel)
-- End-to-end sign-in against a live Microsoft login
+- Scanning the computer's `FIDO:/` QR code and deriving the keys
+- The Bluetooth (BLE) proximity broadcast
+- The Noise-encrypted tunnel through the relay server
+- CTAP2 getAssertion over the tunnel, signed with the imported passkey
 
-The deterministic cryptography for the hybrid flow *is* implemented and tested;
-the radio/network stages (`hybrid/HybridTransport.kt`) throw
-`DeviceStageMissing` rather than pretend to work.
+That is about 1000 lines of Kotlin in `hybrid/`. Next: polishing the app.
 
 ---
 
@@ -112,7 +113,8 @@ app/src/main/java/it/snel/passkeychain/
   io/         Bitwarden                           (import/export)
   store/      KeystoreCrypto, PasskeyStore        (encrypted storage)
   provider/   PasskeyProviderService, GetAssertionActivity  (Credential Manager)
-  hybrid/     FidoQr, HybridTransport             (cross-device caBLE)
+  hybrid/     FidoQr, HybridTransport, NoiseTunnelClient,
+              AndroidBleAdvertiser, HybridSignInActivity  (cross-device sign-in)
   camera/     QrScanActivity                      (CameraX + ML Kit)
   update/     UpdateChecker                       (self-update)
   ui/         MainActivity + Compose              (UI)

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PassKeyChain — import, store &amp; use your passkeys on Android</title>
-<meta name="description" content="An open-source Android app that imports FIDO2 passkeys from a Bitwarden export, stores them in Android Keystore-encrypted storage, and offers them to sign-ins on the phone as a passkey provider.">
+<meta name="description" content="An open-source Android app that imports FIDO2 passkeys from a Bitwarden export, keeps them in Android Keystore-encrypted storage, and signs you in with them: on a computer by scanning its sign-in QR code, and on the phone itself as a passkey provider.">
 <meta name="theme-color" content="#4F46E5">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon.png" type="image/png">
@@ -113,7 +113,7 @@
   <div class="wrap hero-grid">
     <div>
       <h1>Your passkeys.<br>Your device.<br>Your keys.</h1>
-      <p class="lede">PassKeyChain imports FIDO2 passkeys from a Bitwarden export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and offers them when you sign in on your phone.</p>
+      <p class="lede">PassKeyChain imports FIDO2 passkeys from a Bitwarden export, keeps the private keys in Android&nbsp;Keystore-encrypted storage, and signs you in with them: on your computer by scanning its sign-in QR code, and on your phone as a passkey provider.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/rsnel/passkeychain/releases/download/debug/passkeychain-debug.apk">⬇ Download debug APK</a>
         <a class="btn btn-ghost" href="https://github.com/rsnel/passkeychain">View source on GitHub</a>
@@ -122,6 +122,7 @@
         <span class="pill">GPLv3</span>
         <span class="pill">Android 9+ (API 28)</span>
         <span class="pill">Keystore-encrypted</span>
+        <span class="pill">Sign in on your computer</span>
         <span class="pill">Import &amp; export</span>
         <span class="pill">Self-updating</span>
       </div>
@@ -154,8 +155,8 @@
       </div>
       <div class="card">
         <div class="ic">🔗</div>
-        <h3>Recognizes sign-in QRs</h3>
-        <p>Scans and decodes the <code>FIDO:/</code> QR a computer shows for passkey sign-in. Completing such a sign-in from the phone is not supported yet. <a href="#qr-signin">How QR sign-in works →</a></p>
+        <h3>Sign in on your computer</h3>
+        <p>Scan the QR code a computer shows when it asks for a passkey, and PassKeyChain completes the sign-in over Bluetooth and an encrypted tunnel. Tested with a real Microsoft sign-in. <a href="#qr-signin">How QR sign-in works →</a></p>
       </div>
       <div class="card">
         <div class="ic">📤</div>
@@ -178,7 +179,7 @@
     <div class="shot-row">
       <div class="shot"><img src="assets/screen_home.png" alt="Passkeys grouped per website"><p>Your passkeys, grouped per website.</p></div>
       <div class="shot"><img src="assets/screen_details.png" alt="Details of one passkey in a bottom sheet"><p>Details, copy and delete (with undo).</p></div>
-      <div class="shot"><img src="assets/screen_scan.png" alt="Camera scanning a sign-in QR code"><p>Recognizes a computer’s sign-in QR.</p></div>
+      <div class="shot"><img src="assets/screen_scan.png" alt="Camera scanning a sign-in QR code"><p>Scan a computer’s sign-in QR to sign in.</p></div>
     </div>
   </div>
 </section>
@@ -263,14 +264,14 @@
       <div class="card"><div class="ic">🔗</div><h3>Tied to the real website</h3><p>The browser only asks for a signature for the website you are actually on, and the signature covers that website’s name, so a look-alike site cannot use it.</p></div>
     </div>
 
-    <p class="note" style="margin-top:22px">This is how browsers and phones do it in general (the FIDO “hybrid” transport). PassKeyChain today does step&nbsp;1: it reads and decodes the QR. Steps&nbsp;2–7 are being worked on.</p>
+    <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the same protocol Android phones and iPhones use for this. PassKeyChain does all seven steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way.</p>
   </div>
 </section>
 
 <section class="shots">
   <div class="wrap">
     <h2>Project status — honestly</h2>
-    <p class="sub">Built to be verifiable; signing in on another device is not supported.</p>
+    <p class="sub">Built to be verifiable, and signing in on a computer works. Now on to polishing the app.</p>
     <div class="status">
       <div class="box good">
         <h3>✅ Working &amp; unit-tested</h3>
@@ -283,14 +284,15 @@
           <li>Self-update channel logic</li>
         </ul>
       </div>
-      <div class="box wip">
-        <h3>🚧 Not supported yet</h3>
+      <div class="box good">
+        <h3>✅ Cross-device sign-in</h3>
         <ul>
-          <li>The hybrid/caBLE <strong>BLE proximity</strong> advertisement</li>
-          <li>The Noise-encrypted relay <strong>tunnel</strong></li>
-          <li>End-to-end sign-in against live Microsoft login</li>
+          <li>Bluetooth proximity broadcast</li>
+          <li>Noise-encrypted tunnel through the relay</li>
+          <li>CTAP2 signature request and response over the tunnel</li>
+          <li>Tested end to end: signing in to a Microsoft account on a computer</li>
         </ul>
-        <p style="color:var(--muted);font-size:14px;margin:12px 0 0">The deterministic crypto for the hybrid flow is implemented and tested; the radio/network stages fail loudly rather than pretend to work. See <code>hybrid/HybridTransport.kt</code>.</p>
+        <p style="color:var(--muted);font-size:14px;margin:12px 0 0">About 1000 lines of Kotlin in <code>hybrid/</code>; the cryptography is unit-tested in CI.</p>
       </div>
     </div>
     <p class="note" style="margin-top:22px">🔒 <strong>Security &amp; scope.</strong> PassKeyChain manages credentials <em>you already own</em>. Private keys never leave your device; there is no server and no telemetry. Passkey portability follows the FIDO Alliance Credential Exchange direction (2025). Treat exports like you would any password-vault backup.</p>
