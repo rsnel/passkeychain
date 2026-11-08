@@ -6,9 +6,24 @@ desktop as the initiator. It was derived from:
 
 - Chromium source (`device/fido/cable/*`, especially `v2_handshake.cc`,
   `noise.cc`, `v2_authenticator.cc` and `fido_tunnel_device.cc`);
-- the Noise Protocol Framework specification, CTAP 2.1 and WebAuthn Level 3;
+- the published specifications listed below;
 - live logs of a working implementation (PassKeyChain, `hybrid/*.kt`);
 - offline verification of the cryptographic steps.
+
+Published specifications the protocol builds on:
+
+| Specification | Used for |
+|---|---|
+| [FIDO CTAP 2.2](https://fidoalliance.org/specs/fido-v2.2-ps-20250714/fido-client-to-authenticator-protocol-v2.2-ps-20250714.html) | The hybrid transport itself (QR code, BLE advert, tunnel, handshake). This document was written from Chromium and live runs, not checked clause by clause against it. |
+| [FIDO CTAP 2.1](https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html) | The CTAP2 commands, status codes, getInfo, and canonical CBOR ([sections 8, 9, 13](#9-ctap2-exchange-over-the-tunnel)) |
+| [W3C WebAuthn Level 3](https://www.w3.org/TR/webauthn-3/) | authenticatorData, flags (UP, UV, BE, BS, AT), signatures, attestation "none" |
+| [The Noise Protocol Framework](https://noiseprotocol.org/noise.html) (revision 34) | The handshake ([section 6](#6-noise-handshake)): pattern notation, MixHash, MixKey, the psk rules, Split |
+| [RFC 5869](https://www.rfc-editor.org/rfc/rfc5869) HKDF, [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104) HMAC | All key derivation ([section 3](#3-key-derivation-from-the-qr-secret)) and the advert tag |
+| [NIST SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final) AES-GCM, [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final) AES | Noise and transport encryption; the advert (AES-256, one ECB block) |
+| [SEC 1 v2](https://www.secg.org/sec1-v2.pdf), [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final) | P-256 points (compressed 33 / uncompressed 65 bytes), ECDH, ECDSA |
+| [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) CBOR, [RFC 9053](https://www.rfc-editor.org/rfc/rfc9053) COSE algorithms | QR payload, CTAP2 messages, the COSE_Key in a new credential |
+| [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455) WebSocket | The connections to the tunnel server ([section 4](#4-tunnel-server-websocket-setup)) |
+| [Bluetooth Core Specification](https://www.bluetooth.com/specifications/specs/core-specification/) | The BLE advertisement (service data, advertising channels) |
 
 How sure each statement is, is marked where it matters:
 
@@ -237,8 +252,27 @@ holds:
 - a local identity (its QR key pair), no peer identity: KNpsk0, prologue `0x01`.
 
 In the QR flow the desktop has a local identity (the key pair whose public half
-is in the QR) and knows no phone key, so it uses KNpsk0. In Noise notation,
-with `s` the desktop's static key, known to both sides in advance:
+is in the QR) and knows no phone key, so it uses KNpsk0.
+
+**Noise notation**, as the Noise specification writes handshake patterns
+(its section 7): each line is one message, `->` from the initiator (Chrome)
+and `<-` from the responder (the phone). The tokens say what that message
+does, in order:
+
+- `e`: the sender makes an ephemeral key pair and sends its public key;
+- `s`: the sender's long-term (static) public key;
+- `ee`, `se`, `es`, `ss`: a Diffie-Hellman between the two parties' keys,
+  first letter the initiator's key, second the responder's (`se` = initiator
+  static with responder ephemeral), mixed into the keys;
+- `psk`: the pre-shared key is mixed in.
+
+Lines above `...` are pre-messages: keys both sides know before the
+handshake starts (here from the QR code). The pattern's name says the same
+in short: **K** = the initiator's static key is **K**nown to the responder in
+advance, **N** = the responder has **N**o static key, **psk0** = the psk is
+mixed in at the start of the first message.
+
+KNpsk0, with `s` the desktop's static key, known to both sides in advance:
 
 ```text
 -> s                 (pre-message: the QR key, mixed in at init)
@@ -765,19 +799,19 @@ Interoperating is not enough; these make the flow safe.
 
 From Chromium's `v2_constants.h` and related code **[chromium]**:
 
-| Name | Value | Notes |
-|---|---|---|
-| kNonceSize | 10 | Bytes of nonce in the EID plaintext |
-| kRoutingIdSize | 3 | |
-| kTunnelIdSize | 16 | |
-| kP256X962Length | 65 | Uncompressed P-256 point |
-| kCompressedPublicKeySize | 33 | |
-| kEIDKeySize | 64 | AES-256 key (32) ‖ HMAC key (32) |
-| kPSKSize | 32 | |
-| kAdvertSize | 20 | 16-byte AES block + 4-byte HMAC tag |
-| kPostHandshakeMsgPaddingGranularity | 512 | |
-| kPaddingGranularity | 32 | Crypter transport padding |
-| kMaxSequence | 2^24 − 1 | Nonce counter limit |
+| Name | Value | Unit | Notes |
+|---|---|---|---|
+| kNonceSize | 10 | bytes | The random part of the EID plaintext |
+| kRoutingIdSize | 3 | bytes | |
+| kTunnelIdSize | 16 | bytes | (128 bits) |
+| kP256X962Length | 65 | bytes | Uncompressed P-256 point |
+| kCompressedPublicKeySize | 33 | bytes | |
+| kEIDKeySize | 64 | bytes | AES-256 key (32) ‖ HMAC key (32) |
+| kPSKSize | 32 | bytes | |
+| kAdvertSize | 20 | bytes | 16-byte AES block + 4-byte HMAC tag |
+| kPostHandshakeMsgPaddingGranularity | 512 | bytes | |
+| kPaddingGranularity | 32 | bytes | Crypter transport padding |
+| kMaxSequence | 2^24 − 1 | messages | Nonce counter limit (a count, not a size) |
 
 | Item | Value |
 |---|---|
