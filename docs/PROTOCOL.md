@@ -54,6 +54,7 @@ How sure each statement is, is marked where it matters:
 16. [Debugging checklist](#16-debugging-checklist)
 17. [Reference: constants](#17-reference-constants)
 18. [Test vectors](#18-test-vectors)
+19. [Compared with CTAP 2.2](#19-compared-with-ctap-22)
 
 ## 1. Roles and overall flow
 
@@ -99,7 +100,12 @@ CBOR map with these keys **[verified for 0–5]**:
 | 2 | Number of known tunnel server domains (integer) |
 | 3 | Current unix time (integer, seconds) |
 | 4 | Whether the desktop supports state-assisted transactions (linking), boolean. A CBOR boolean is major type 7: a decoder without major type 7 fails here. |
-| 5 | Request hint: `"ga"` (getAssertion) or `"mc"` (makeCredential) |
+| 5 | Request hint: `"ga"` (getAssertion) or `"mc"` (makeCredential); CTAP 2.2 adds `"dcp"` and `"dci"` (Digital Credentials API: presentation, issuance) |
+
+CTAP 2.2 makes keys 3 and 4 optional, and the browser may add a key 65535 with
+value 0 at random ("GREASE", [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701)),
+so that new keys can be added later: decode the QR with a real CBOR parser and
+ignore keys you don't know. **[spec]**
 
 The public key in field 0 is the **desktop's** static public key, not the
 phone's. The QR secret in field 1 is the input to all key derivation.
@@ -211,7 +217,7 @@ The EID plaintext is 16 bytes:
 | 0 | `0x00` |
 | 1–10 | 10 fresh random bytes (`kNonceSize` = 10), new for every sign-in |
 | 11–13 | The 3-byte routing ID from `X-Cable-Routing-Id` |
-| 14–15 | The 2-byte tunnel server domain, little-endian: 0 for `cable.ua5v.com`. Chromium copies its `uint16_t` with `memcpy` (`eid::FromComponents`), so native byte order, which is little-endian on phones and PCs. **[chromium]** Numbers 256–65535 are computed hostnames; see [section 4](#4-tunnel-server-websocket-setup). |
+| 14–15 | The 2-byte tunnel server domain, little-endian: 0 for `cable.ua5v.com`. **[spec, chromium]** (CTAP 2.2 says little-endian; Chromium copies its `uint16_t` with `memcpy`.) Numbers 256–65535 are computed hostnames; see [section 4](#4-tunnel-server-websocket-setup). |
 
 The 20-byte BLE payload **[verified]**:
 
@@ -604,14 +610,22 @@ makes no difference. (PassKeyChain puts it big-endian in bytes 0–3;
 
 ## 12. MessageType byte
 
-Chromium's `v2_constants.h` defines **[chromium]**:
+CTAP 2.2 says every message after the post-handshake message begins with a
+byte for its type **[spec]**:
 
-| Name | Value |
+| Value | Type |
 |---|---|
-| kCTAP | `0x00` |
-| kJSON | `0x01` |
-| kShutdown | `0x02` |
-| kUpdate | `0x03` |
+| `0x00` | shutdown (only the browser sends it) |
+| `0x01` | CTAP: a CTAP2 command, or the reply, follows |
+| `0x02` | update |
+| `0x03` | JSON-based message |
+
+Earlier versions of these notes gave a different numbering (kCTAP `0x00`,
+kJSON `0x01`, kShutdown `0x02`, kUpdate `0x03`) as Chromium's
+`v2_constants.h`; that could not be confirmed and should not be relied on.
+In the Chromium version checked (2021: `v2_authenticator.cc`,
+`fido_tunnel_device.cc`) neither side reads or writes a type byte at all, and
+that is what Chrome does with PassKeyChain today:
 
 Observed behaviour against Chrome **[verified]**:
 
@@ -622,12 +636,14 @@ Observed behaviour against Chrome **[verified]**:
 - The phone's CTAP2 response must **not** have a MessageType prefix. Its first
   byte is the CTAP2 status byte (`0x00` for success). Prepending `0x00` causes
   "Trailing data bytes are not allowed" from Chrome's CTAP2 parser.
-- A 1-byte message `0x02` means kShutdown (Chrome asks to close the tunnel).
-- A 1-byte message `0x03` means kUpdate (Chrome sends update info).
+- A 1-byte message `0x02` was taken for shutdown and `0x03` for update. By
+  CTAP 2.2's numbering `0x02` would be update; closing the tunnel on it has
+  done no harm so far, because it came at the end. **[unverified]**
 
-**[unverified]** Whether Chrome adds the prefix probably depends on what was
-negotiated (the features in the post-handshake message), not on chance. Until
-the rule is known, the receive dispatcher has to recognise both forms:
+**[unverified]** Whether Chrome uses the type byte probably depends on what
+the phone announces (the features in the post-handshake message, [section
+19](#19-compared-with-ctap-22)), not on chance. Until the rule is known, the
+receive dispatcher has to recognise both forms:
 
 | Message | Treatment |
 |---|---|
@@ -925,3 +941,69 @@ Post-handshake padding: a 100-byte CBOR map is padded to 512 bytes, ending in
 266    cable.wufkweyy3uaxb.com   (Chromium's test value)
 65535  cable.lw6vahpb5pldb.net
 ```
+
+## 19. Compared with CTAP 2.2
+
+[CTAP 2.2](https://fidoalliance.org/specs/fido-v2.2-ps-20250714/fido-client-to-authenticator-protocol-v2.2-ps-20250714.html)
+(Proposed Standard, July 2025) specifies the hybrid transport in its section
+11.5. This document was written from Chromium and from what works with Chrome;
+this section lists where the two agree and where they differ, from a reading
+of section 11.5.
+
+**The same** in both:
+
+- the QR code: `FIDO:/`, the digit encoding, keys 0–5 ([section 2](#2-qr-code-contents));
+- key derivation: HKDF-SHA256 with a 32-bit little-endian purpose (1 EID key,
+  2 tunnel id, 3 psk), no salt except the advert plaintext for the psk
+  ([section 3](#3-key-derivation-from-the-qr-secret));
+- the advert: service UUID `0xFFF9`, AES-256 over one block, a 4-byte
+  HMAC-SHA256 tag, plaintext flags 0 ‖ 10-byte nonce ‖ 3-byte routing id ‖
+  2-byte server number, little-endian ([section 5](#5-ble-advertisement-eid));
+- tunnel servers: `cable.ua5v.com` (0), `cable.auth.com` (1), and the
+  computed names for 256 and up ([section 4](#4-tunnel-server-websocket-setup));
+- the browser's URL `/cable/connect/<routing id>/<tunnel id>` and the
+  subprotocol `fido.cable`;
+- the handshake: KNpsk0 for QR codes (NKpsk0 for linked phones) with P-256,
+  SHA-256 and AES-256-GCM, a single byte 1 mixed into the hash first (the
+  prologue), the browser speaking first, empty payloads
+  ([section 6](#6-noise-handshake));
+- transport: one counter per direction, big-endian in a 12-byte nonce, at
+  most 2^24 messages, no additional data, and padding whose last byte counts
+  the padding bytes before it, granularity 32 recommended
+  ([sections 7, 10, 11](#7-transport-keys)).
+
+**Different**:
+
+| Topic | CTAP 2.2 | This document (what works with Chrome) |
+|---|---|---|
+| Type byte on messages | Every message after the post-handshake message starts with a type: `0x00` shutdown, `0x01` CTAP, `0x02` update, `0x03` JSON | CTAP requests arrive without it, and a reply with a type byte in front is refused by Chrome ("Trailing data bytes are not allowed"); [section 12](#12-messagetype-byte) |
+| Post-handshake padding | Inside the CBOR map: optional key 0, a byte string of zeros | Outside it: Chromium's `EncodePaddedCBORMap`, the map followed by zeros and a 2-byte little-endian count, to a 512-byte multiple (256 in older Chromium); [section 8](#8-post-handshake-message) |
+| Post-handshake key 2 | Reserved | Linking information (Chromium), for linked phones |
+
+A likely explanation for the first two: Chrome speaks an earlier revision of
+the protocol to authenticators that don't announce the newer one, and
+PassKeyChain announces only `"ctap"`. **[unverified]** An authenticator that
+follows CTAP 2.2 to the letter should therefore be tested against Chrome
+before these two are changed.
+
+**Not in CTAP 2.2**, because it calls the authenticator's side of the tunnel
+"a private detail of the authenticator's implementation":
+
+- the phone's URL `/cable/new/<tunnel id>` and the `X-Cable-Routing-Id`
+  answer header ([section 4](#4-tunnel-server-websocket-setup)): this is how
+  Google's tunnel server works;
+- how long a QR code may be used: CTAP 2.2 only puts the time in the QR
+  code (key 3); the 20 minutes PassKeyChain allows are its own choice
+  ([section 15](#15-security-requirements)).
+
+**Extra in CTAP 2.2**, not used by PassKeyChain:
+
+- QR hints `"dcp"` and `"dci"` (Digital Credentials API) and the GREASE key
+  65535 ([section 2](#2-qr-code-contents));
+- post-handshake key 3, features, defaults to `["ctap"]` when absent;
+- linked phones (state-assisted transactions, section 11.5.2): the contact URL
+  `/cable/contact/<contact id>` with an `X-caBLE-Client-Payload` header, and
+  HTTP 410 meaning the phone has been unlinked;
+- after sending shutdown, a browser that supports linked phones should accept
+  messages for two more minutes;
+- the browser must follow redirects when it connects to the tunnel server.
