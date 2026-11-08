@@ -148,17 +148,23 @@ class NoiseTunnelClient(
         private fun next(seconds: Long, timeoutMessage: String): ByteArray {
             val event = incoming.poll(seconds, TimeUnit.SECONDS)
                 ?: throw SignInFailure(timeoutMessage)
+            // Before the computer has connected, the tunnel server only waits for it:
+            // when it gives up and closes (or the wait breaks off), the cause is
+            // nearly always that the computer never saw the Bluetooth broadcast.
+            val waitingForComputer = crypter == null
             return when (event) {
                 is Event.Data -> event.bytes
                 is Event.Closed -> throw SignInFailure(
-                    if (crypter == null) "The connection closed before the computer connected. Scan a fresh QR code."
-                    else "The computer ended the sign-in.",
+                    if (waitingForComputer) NO_COMPUTER else "The computer ended the sign-in.",
                 )
                 is Event.Broken -> {
                     incoming.offer(event) // later waits end at once too
                     throw SignInFailure(
-                        if (event.cause == null) "Cancelled."
-                        else "The connection to the tunnel server was lost. Check the phone's internet connection.",
+                        when {
+                            event.cause == null -> "Cancelled."
+                            waitingForComputer -> "$NO_COMPUTER If that doesn't help, check the phone's internet connection."
+                            else -> "The connection to the tunnel server was lost. Check the phone's internet connection."
+                        },
                         event.cause,
                     )
                 }
@@ -207,11 +213,7 @@ class NoiseTunnelClient(
         /** msg1 in, msg2 out, then the post-handshake message; returns the transport crypter. */
         private fun handshake(): NoiseCrypter {
             // Nothing arrives until the computer has seen the Bluetooth broadcast.
-            val msg1 = next(
-                MSG1_TIMEOUT,
-                "Your computer did not connect. Move the phone close to the computer, check that Bluetooth " +
-                    "is on on the computer, and scan a fresh QR code.",
-            )
+            val msg1 = next(MSG1_TIMEOUT, NO_COMPUTER)
             onBrowserConnected()
             val result = try {
                 handshake.respond(msg1)
@@ -237,6 +239,10 @@ class NoiseTunnelClient(
     }
 
     private companion object {
+        /** The computer never connected: it did not pick up the Bluetooth broadcast. */
+        const val NO_COMPUTER = "Your computer did not respond: it didn't pick up the phone's Bluetooth broadcast. " +
+            "Move the phone close to the computer, check that Bluetooth is on on the computer, and scan a fresh QR code."
+
         /** how long the computer gets to find the Bluetooth broadcast and connect */
         const val MSG1_TIMEOUT = 90L
         /** how long the computer gets to send its request after the handshake */

@@ -4,3 +4,4 @@
 - Pull down to sync when live sync is on
 - New passkeys go to your Bitwarden server right away, with a notice
 - The scan button is now "Scan QR code": it signs in and creates passkeys
+- Clearer message when the computer doesn't pick up the Bluetooth signal
