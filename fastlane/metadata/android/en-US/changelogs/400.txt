@@ -4,3 +4,4 @@
 - Pull down to sync now when live sync is on
 - A new passkey goes to your Bitwarden server right away, with a notice
 - The scan button is now "Scan QR code": it signs in and creates passkeys
+- Checks for updates at startup (can be turned off in the menu)

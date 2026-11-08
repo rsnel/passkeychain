@@ -1,6 +1,7 @@
 package it.snel.passkeychain.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -219,6 +220,16 @@ private fun MainScreen(store: PasskeyStore) {
     var vaultDialog by remember { mutableStateOf(false) }
     var vaultExport by remember { mutableStateOf(false) }
     var serverSheet by remember { mutableStateOf(false) }
+    val prefs = remember { ctx.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    var checkAtStart by remember { mutableStateOf(prefs.getBoolean(PREF_CHECK_AT_START, true)) }
+    // once per app start, quietly: only a newer version is shown
+    LaunchedEffect(Unit) {
+        if (checkAtStart && !StartupCheck.done) {
+            StartupCheck.done = true
+            val status = updater.check()
+            if (status is UpdateChecker.Status.Available && update == null) update = UpdateUi.Result(status)
+        }
+    }
     var liveSetup by remember { mutableStateOf(false) }
     remember { LiveSync.init(ctx) }
     val serverStatus by LiveSync.status.collectAsState()
@@ -360,6 +371,16 @@ private fun MainScreen(store: PasskeyStore) {
                                 menuOpen = false
                                 update = UpdateUi.Checking
                                 scope.launch { update = UpdateUi.Result(updater.check()) }
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Check at startup") },
+                            leadingIcon = { Icon(AppIcons.SystemUpdate, null) },
+                            trailingIcon = { Checkbox(checked = checkAtStart, onCheckedChange = null) },
+                            onClick = {
+                                checkAtStart = !checkAtStart
+                                prefs.edit().putBoolean(PREF_CHECK_AT_START, checkAtStart).apply()
+                                scope.launch { snackbar.showSnackbar(if (checkAtStart) "Checks for updates when the app starts" else "No update check at startup") }
                             },
                         )
                         if (BuildConfig.DEBUG) {
@@ -1156,3 +1177,8 @@ private fun BusyDialog(text: String) {
         confirmButton = {},
     )
 }
+
+private const val PREF_CHECK_AT_START = "check_updates_at_start"
+
+/** The startup update check runs once per process, not again on rotation or return. */
+private object StartupCheck { var done = false }
