@@ -1,0 +1,4 @@
+- Your own Vaultwarden or Bitwarden server: import passkeys, add new ones to it, or keep both in live sync
+- Live sync can share new passkeys through an organisation collection
+- Server status light: green in sync, yellow needs attention, red no connection
+- New logo: the middle key hangs on its own ring
