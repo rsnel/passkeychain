@@ -186,7 +186,9 @@ class UpdateChecker(private val context: Context) {
         context.startActivity(Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            if (context !is android.app.Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // the installer in its own task: in ours it goes down with the old app
+            // during the update, and its "Open" then lands in a dying task and does nothing
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         })
     }
 
