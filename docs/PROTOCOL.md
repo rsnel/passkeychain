@@ -38,6 +38,7 @@ How sure each statement is, is marked where it matters:
 15. [Security requirements](#15-security-requirements)
 16. [Debugging checklist](#16-debugging-checklist)
 17. [Reference: constants](#17-reference-constants)
+18. [Test vectors](#18-test-vectors)
 
 ## 1. Roles and overall flow
 
@@ -789,3 +790,104 @@ From Chromium's `v2_constants.h` and related code **[chromium]**:
 | EID cipher | AES-256-ECB (one block) + truncated HMAC-SHA256 |
 | CTAP2 commands | `0x01` makeCredential, `0x02` getAssertion, `0x04` getInfo, `0x0B` selection |
 | CTAP2 status | `0x00` OK, `0x01` invalid command, `0x12` invalid CBOR, `0x19` credential excluded, `0x26` unsupported algorithm, `0x27` operation denied, `0x2E` no credentials |
+
+## 18. Test vectors
+
+Computed by [`docs/protocol-vectors.py`](protocol-vectors.py), an independent
+implementation in Python, which prints this section. PassKeyChain's unit tests
+check the same values (`ProtocolVectorsTest`, `NoiseHandshakeTest`). All
+values are hex unless noted. Private keys are fixed for reproducibility:
+P-256 scalars of 32 equal bytes, `0x11..11` for the browser's QR key `s_i`,
+`0x22..22` for its ephemeral `e_i`, `0x33..33` for the phone's ephemeral `e_r`.
+
+### 18.1 QR code
+
+The QR map ([section 2](#2-qr-code-contents)) with the browser's public key, the
+QR secret `00 01 .. 0f`, 2 known tunnel server domains, time 1794135600, no
+linking, hint `"ga"`:
+
+```text
+CBOR     a6005821020217e617f0b6443928278f96999e69a23a4f2c152bdf6d6cdf66e5b80282d4ed0150000102030405060708090a0b0c0d0e0f0202031a6af0563004f405626761
+QR text  FIDO:/064761326369506941132196635817367045715076129656615309261485932746823659474011834762800564050807352788025421010491811870057950297627316213606389454340866107096654083076
+```
+
+### 18.2 Keys from the QR secret
+
+[Section 3](#3-key-derivation-from-the-qr-secret):
+
+```text
+EID AES key   d06e92859fa9afce38139c04dae7f64196acfdb9a28dffb326f3a8f2cc0788e2
+EID HMAC key  28bd73c3484f2f7de169d9b087c30e6f409e70bc86f5d65e03d762b4b0df2af7
+tunnel id     de1d8150b45f03349b2b00a52e2e893e
+```
+
+The phone connects to `wss://cable.ua5v.com/cable/new/de1d8150b45f03349b2b00a52e2e893e`.
+
+### 18.3 Advert and PSK
+
+[Section 5](#5-ble-advertisement-eid), with nonce `a0 a1 .. a9`, routing id `c0ffee`:
+
+```text
+EID plaintext (domain 0)    00a0a1a2a3a4a5a6a7a8a9c0ffee0000
+advert (domain 0)           94198c8ba6d8f263ce372e5a84b41f31e66db611
+EID plaintext (domain 266)  00a0a1a2a3a4a5a6a7a8a9c0ffee0a01
+advert (domain 266)         783741baf316f77f3770a0e3e4384f0160c177f9
+psk (domain 0 plaintext)    7cc9adc8f8a4663be4c0e4cda5b44a9c38369d5309e73b6b446d3096f551641d
+```
+
+Domain 266 is the computed server `cable.wufkweyy3uaxb.com` ([section 4](#4-tunnel-server-websocket-setup)); its
+number appears little-endian in bytes 14–15 (`0a01`), and it changes the
+advert and the psk.
+
+### 18.4 Noise handshake
+
+[Section 6](#6-noise-handshake), with the fixed keys above and, so that this
+vector stands on its own, the psk `00 01 .. 1f` rather than the one from 18.3:
+
+```text
+s_i (uncompressed)                           040217e617f0b6443928278f96999e69a23a4f2c152bdf6d6cdf66e5b80282d4ed194a7debcb97712d2dda3ca85aa8765a56f45fc758599652f2897c65306e5794
+e_i                                          04d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c91285
+e_r                                          0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1
+psk                                          000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+h = ck after init (name padded to 32 bytes)  4e6f6973655f4b4e70736b305f503235365f41455347434d5f53484132353600
+h after MixHash(prologue 0x01)               2368ca317a7b06a2424e87c2705aea6823e02b9aff3755ee08a0bc3ad49e10ac
+h after MixHash(s_i, uncompressed)           e5f19b46d787fc4c5226d7df6615b0c59a9530957f5fc5585eb2130df9399da1
+ck after MixKeyAndHash(psk)                  7f820705cec698399d00b7cc8884a0ef064bdc1135a59aad002049fa02e1384d
+h after MixKeyAndHash(psk)                   f78be16cd56481d19b2da266fdc8ec317e9082669cbb0babb3cd49226bef5872
+h after msg1                                 da6897087c09337f2d616c693d757379f7f82fe5c0e211b1cf0c197ac9f0e09d
+```
+
+```text
+msg1 (browser)  04d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c912850b5cdd7aad2f31288946b97b9bf4ff30
+msg2 (phone)    0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a10bbf8dd558164c71c16b2efd758a64b3
+handshake hash  5279b5a75e774b9db7607132ca0695a87db5b54aa922ab897b536168f5dce415
+```
+
+### 18.5 Transport
+
+[Sections 7, 10 and 11](#7-transport-keys): `k1` the phone receives with, `k2`
+it sends with; every record is Crypter-padded to 32 bytes and sealed with
+AES-256-GCM, no additional data, nonce `00`×8 ‖ counter (big-endian).
+
+```text
+k1 (browser -> phone)          c736eed4e03cdfd00c86ed2315762dcf191196e7de0d9e000cd02c40d5043934
+k2 (phone -> browser)          d96ef52dcaf9deb0e52e8c08d5cca5793fcd2d9ed509f5be27974c8573e9467c
+nonce, counter 1               000000000000000000000001
+phone sends 00a0, counter 0    711ee11d8f612de52bfffbe608bfd0ba02179546c6612e8cf46f2fb412caade1e17b0ff77d7f0de4a5ec2551c2f9d2dd
+phone sends 'x'*40, counter 1  cefab81e86b9b90afc1d09e693f16f4c2e429c7e2711b1c13e277926a38f1d3b3d8eb6f5949a3d48b1b871cbe1db24027a3fb81a6db234bdb2302a53c3a91482fbce1db6256440fb3b4748717eee1cdd
+phone receives, counter 0      e6d80410f66e95b9d5b8a4388bd9db846fab9a36fee839a1d7345f64bf3240eda18c96d881084ca73a200c2b58af36dd
+... which opens to             02a1016161
+```
+
+Post-handshake padding: a 100-byte CBOR map is padded to 512 bytes, ending in
+`9a01` (410 padding bytes, little-endian); a 511-byte map to 1024.
+
+### 18.6 Tunnel server names
+
+[Section 4](#4-tunnel-server-websocket-setup):
+
+```text
+256    cable.qz2ekwmnd332c.info
+266    cable.wufkweyy3uaxb.com   (Chromium's test value)
+65535  cable.lw6vahpb5pldb.net
+```
