@@ -68,6 +68,15 @@ jobs:
           } >> "$GITHUB_ENV"
 
       # the unit tests (which re-verify the crypto core) run against debug
+      - name: F-Droid changelogs under 500 characters
+        run: |
+          bad=0
+          for f in fastlane/metadata/android/*/changelogs/*.txt; do
+            n=$(wc -m < "$f")
+            if [ "$n" -gt 500 ]; then echo "::error file=$f::$n characters, F-Droid allows 500"; bad=1; fi
+          done
+          exit $bad
+
       - name: Tunnel server tests
         working-directory: server
         run: python3 -m unittest -v
