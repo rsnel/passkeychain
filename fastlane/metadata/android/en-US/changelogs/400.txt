@@ -1,1 +1,2 @@
 - About shows links to the website and the source code
+- Sign-in screen counts the Bluetooth packets sent while the computer looks for the phone

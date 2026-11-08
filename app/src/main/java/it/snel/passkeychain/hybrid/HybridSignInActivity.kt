@@ -157,6 +157,21 @@ class HybridSignInActivity : FragmentActivity() {
 
     private val states = mutableStateListOf<State>(State.Active).apply { repeat(Step.entries.size - 1) { add(State.Pending) } }
     private var tunnelHost by mutableStateOf<String?>(null)
+    // the Bluetooth broadcast: when it started and stopped (uptime ms), and a clock to count it
+    private var advertStart by mutableStateOf<Long?>(null)
+    private var advertStop by mutableStateOf<Long?>(null)
+    private var clock by mutableStateOf(0L)
+
+    /**
+     * Roughly how many adverts went out: Android doesn't report them, so this
+     * counts advertising events at the low-latency interval (about 10 a second);
+     * each event is one packet on each of the three advertising channels.
+     */
+    private fun advertsSent(): Long? {
+        val start = advertStart ?: return null
+        val end = advertStop ?: clock.coerceAtLeast(start)
+        return (end - start) / ADVERT_INTERVAL_MS + 1
+    }
     private var scanHint by mutableStateOf<String?>(null)
     private var signDetail by mutableStateOf<String?>(null)
     /** the computer asks to create a passkey instead of signing in */
@@ -400,6 +415,7 @@ class HybridSignInActivity : FragmentActivity() {
             onBrowserConnected = { done(Step.BrowserHello, Step.PhoneHello) },
             onHandshakeDone = {
                 ble.stop() // the computer has found the phone: no need to keep broadcasting
+                runOnUiThread { if (advertStop == null) advertStop = android.os.SystemClock.uptimeMillis() }
                 done(Step.PhoneHello, Step.Request)
             },
         )
@@ -407,7 +423,10 @@ class HybridSignInActivity : FragmentActivity() {
             when (p) {
                 is HybridTransport.Progress.TunnelOpening -> runOnUiThread { tunnelHost = p.host }
                 HybridTransport.Progress.TunnelOpen -> done(Step.Tunnel, Step.Bluetooth)
-                HybridTransport.Progress.Broadcasting -> done(Step.Bluetooth, Step.BrowserHello)
+                HybridTransport.Progress.Broadcasting -> {
+                    runOnUiThread { advertStart = android.os.SystemClock.uptimeMillis() }
+                    done(Step.Bluetooth, Step.BrowserHello)
+                }
             }
         }
         this.transport = transport
@@ -582,6 +601,14 @@ class HybridSignInActivity : FragmentActivity() {
             if (busy) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+        // the advert counter ticks while broadcasting (stops with the broadcast, or a failure)
+        LaunchedEffect(advertStart, advertStop, failed) {
+            if (failed && advertStart != null && advertStop == null) advertStop = android.os.SystemClock.uptimeMillis()
+            while (advertStart != null && advertStop == null && !failed) {
+                clock = android.os.SystemClock.uptimeMillis()
+                kotlinx.coroutines.delay(ADVERT_INTERVAL_MS)
+            }
+        }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
             // upper half: the camera, or what came of the scan
             Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().background(Color.Black)) {
@@ -663,7 +690,7 @@ class HybridSignInActivity : FragmentActivity() {
     private fun titleFor(step: Step) = when (step) {
         Step.Scan -> "Scan the QR code"
         Step.Tunnel -> "Set up the tunnel"
-        Step.Bluetooth -> "Tell the browser where to go"
+        Step.Bluetooth -> "Tell the browser where to go" + (advertsSent()?.let { " · ~${it * 3} packets" } ?: "")
         Step.BrowserHello -> "The browser starts the handshake"
         Step.PhoneHello -> "The phone answers the handshake"
         Step.Request -> if (creating) "The browser asks for a new passkey" else "The browser asks for a signature"
@@ -946,3 +973,6 @@ class HybridSignInActivity : FragmentActivity() {
         }
     }
 }
+
+/** Android's low-latency advertising interval: about 100 ms between advertising events. */
+private const val ADVERT_INTERVAL_MS = 100L
