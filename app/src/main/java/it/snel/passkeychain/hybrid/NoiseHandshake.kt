@@ -153,7 +153,7 @@ class NoiseHandshake(
             require(x < p) { "x out of range" }
             val rhs = (x.pow(3) + p256.curve.a * x + p256.curve.b).mod(p)
             var y = rhs.modPow(p.add(BigInteger.ONE).shiftRight(2), p) // p = 3 mod 4
-            require(y.modPow(BigInteger.TWO, p) == rhs) { "not a point on P-256" }
+            require(y.modPow(TWO, p) == rhs) { "not a point on P-256" }
             if (y.testBit(0) != (prefix == 0x03)) y = p.subtract(y)
             return byteArrayOf(0x04) + fixed(x.toByteArray()) + fixed(y.toByteArray())
         }
@@ -165,7 +165,7 @@ class NoiseHandshake(
             val x = BigInteger(1, point65.copyOfRange(1, 33))
             val y = BigInteger(1, point65.copyOfRange(33, 65))
             if (x >= p || y >= p) return false
-            return y.modPow(BigInteger.TWO, p) == (x.pow(3) + p256.curve.a * x + p256.curve.b).mod(p)
+            return y.modPow(TWO, p) == (x.pow(3) + p256.curve.a * x + p256.curve.b).mod(p)
         }
 
         fun uncompressed(pub: ECPublicKey): ByteArray =
@@ -257,3 +257,6 @@ class NoiseCrypter(private val receiveKey: ByteArray, private val sendKey: ByteA
         }
     }
 }
+
+/** 2. (BigInteger.TWO only exists from Android 13 on; the app runs from Android 9.) */
+private val TWO: BigInteger = BigInteger.valueOf(2)

@@ -1,7 +1,7 @@
-- About links to the website and the source code
-- Sign-in screen counts the Bluetooth packets sent
-- Sturdier update check: retries timeouts, checks at startup (can be turned off), and "Open" after an update starts the app
-- Pull down to sync when live sync is on
-- New passkeys go to your Bitwarden server right away, with a notice
-- The scan button is now "Scan QR code": it signs in and creates passkeys
+- Fixes a crash on Android 12 and older right after scanning
+- Pull down to sync; new passkeys go to your Bitwarden server right away
+- Sturdier update check: retries, checks at startup (can be turned off), "Open" after an update works
 - Clearer message when the computer doesn't pick up the Bluetooth signal
+- Sign-in screen counts the Bluetooth packets sent
+- "Scan QR code" button: it signs in and creates passkeys
+- About links to the website and the source code

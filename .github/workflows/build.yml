@@ -81,6 +81,9 @@ jobs:
         working-directory: server
         run: python3 -m unittest -v
 
+      - name: Lint (calls newer than the oldest supported Android)
+        run: ./gradlew --no-daemon lintDebug
+
       - name: Unit tests and APK
         run: |
           set -o pipefail

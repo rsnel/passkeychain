@@ -44,6 +44,12 @@ val appVersionName = System.getenv("PASSKEYCHAIN_VERSION_NAME")?.takeIf { it.isN
     ?: "dev"
 
 android {
+    // CI runs lint for one thing only: calls newer than minSdk, which crash on
+    // old phones (BigInteger.TWO did, on Android < 13)
+    lint {
+        checkOnly += "NewApi"
+        abortOnError = true
+    }
     namespace = "it.snel.passkeychain"
     compileSdk = 35
 
