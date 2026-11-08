@@ -94,6 +94,15 @@ The debug app has a grey icon, so the two are easy to tell apart.
   credential transfer (`androidx.credentials.providerevents`, beta) to fetch
   them from another manager on the phone that offers it; a CXF file can be
   imported like a Bitwarden file.
+- **A Bitwarden-compatible server** (Vaultwarden, or Bitwarden itself):
+  *Import passkeys… → From a server* signs in like Bitwarden's own apps
+  (server address, email, master password, and an authenticator or email
+  code if the account has one), fetches the vault and decrypts only the
+  passkeys (`io/VaultSync.kt`). Read-only: nothing changes on the server. The
+  master password and vault keys are not stored; the server's refresh token
+  is (Keystore-encrypted), so the next sync needs no second code. Tested
+  against a simulated server so far; Bitwarden's terms don't cover
+  unofficial clients, so a self-hosted Vaultwarden is the safer target.
 - **Export** writes Bitwarden's format (optionally password protected).
   PassKeyChain does not offer its passkeys to *other apps* through Android's
   credential transfer: that would hand every private key to another app

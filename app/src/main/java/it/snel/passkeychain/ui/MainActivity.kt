@@ -106,6 +106,7 @@ import androidx.compose.ui.unit.dp
 import it.snel.passkeychain.R
 import it.snel.passkeychain.hybrid.HybridSignInActivity
 import it.snel.passkeychain.hybrid.TunnelSettings
+import it.snel.passkeychain.store.VaultSettings
 import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.io.Cxf
 import it.snel.passkeychain.io.ImportMerge
@@ -210,6 +211,7 @@ private fun MainScreen(store: PasskeyStore) {
     var exportChoice by remember { mutableStateOf(false) }
     var importChoice by remember { mutableStateOf(false) }
     var tunnelDialog by remember { mutableStateOf(false) }
+    var vaultDialog by remember { mutableStateOf(false) }
     var exportPassword by remember { mutableStateOf<String?>(null) } // null: unencrypted
     var pendingImport by remember { mutableStateOf<PendingImport?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -478,6 +480,21 @@ private fun MainScreen(store: PasskeyStore) {
         onDismiss = { importChoice = false },
         onFile = { importChoice = false; importFile() },
         onApp = { importChoice = false; importFromApp() },
+        onServer = { importChoice = false; vaultDialog = true },
+    )
+    if (vaultDialog) VaultSyncDialog(
+        VaultSettings(ctx),
+        onDismiss = { vaultDialog = false },
+        onSynced = { json, host, skipped ->
+            vaultDialog = false
+            scope.launch {
+                val msg = withContext(Dispatchers.IO) {
+                    runCatching { importJson(ctx, store, json, "Synced from $host") }.getOrElse { "Sync failed: ${it.message}" }
+                }
+                passkeys = withContext(Dispatchers.IO) { store.load() }
+                snackbar.showSnackbar(if (skipped > 0) "$msg · $skipped item(s) could not be decrypted" else msg)
+            }
+        },
     )
 
     if (exportChoice) ExportDialog(
@@ -838,7 +855,7 @@ private fun shortId(id: String): String = if (id.length <= 20) id else id.take(1
 
 /** Where to import from: a file (the format is recognised by its content) or another app on the phone. */
 @Composable
-private fun ImportDialog(onDismiss: () -> Unit, onFile: () -> Unit, onApp: () -> Unit) {
+private fun ImportDialog(onDismiss: () -> Unit, onFile: () -> Unit, onApp: () -> Unit, onServer: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(AppIcons.FileDownload, null) },
@@ -856,6 +873,12 @@ private fun ImportDialog(onDismiss: () -> Unit, onFile: () -> Unit, onApp: () ->
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text("From another app") },
                     supportingContent = { Text("A password manager on this phone that offers its passkeys for transfer") },
+                )
+                ListItem(
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onServer),
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("From a server") },
+                    supportingContent = { Text("Your Vaultwarden or Bitwarden server, read-only, with your master password") },
                 )
             }
         },

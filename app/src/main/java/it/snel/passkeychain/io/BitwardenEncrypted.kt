@@ -106,18 +106,24 @@ object BitwardenEncrypted {
 
     class Keys(val enc: ByteArray, val mac: ByteArray)
 
-    fun deriveKeys(password: String, salt: String, kdf: Kdf): Keys {
+    fun deriveKeys(password: String, salt: String, kdf: Kdf): Keys = stretch(masterKey(password, salt, kdf))
+
+    /** The 32-byte key from a password: PBKDF2-SHA256, or Argon2id with SHA-256(salt) as salt. */
+    fun masterKey(password: String, salt: String, kdf: Kdf): ByteArray {
         val pw = password.toByteArray(Charsets.UTF_8)
         val saltBytes = salt.toByteArray(Charsets.UTF_8)
-        val master = when (kdf) {
+        return when (kdf) {
             is Kdf.Pbkdf2 -> pbkdf2Sha256(pw, saltBytes, kdf.iterations, 32)
             is Kdf.Argon2id -> Argon2id.hash(
                 pw, MessageDigest.getInstance("SHA-256").digest(saltBytes),
                 kdf.iterations, kdf.memoryMiB * 1024, kdf.parallelism, 32,
             )
         }
-        return Keys(hkdfExpand(master, "enc".toByteArray(), 32), hkdfExpand(master, "mac".toByteArray(), 32))
     }
+
+    /** A master key stretched into an encryption key and a MAC key (HKDF-Expand, "enc" and "mac"). */
+    fun stretch(master: ByteArray): Keys =
+        Keys(hkdfExpand(master, "enc".toByteArray(), 32), hkdfExpand(master, "mac".toByteArray(), 32))
 
     fun pbkdf2Sha256(password: ByteArray, salt: ByteArray, iterations: Int, length: Int): ByteArray {
         require(password.isNotEmpty()) { "empty password" } // also: an HMAC key cannot be empty
