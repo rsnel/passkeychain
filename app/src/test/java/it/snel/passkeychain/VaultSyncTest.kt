@@ -65,7 +65,8 @@ class VaultSyncTest {
                     .put("id", "user-1")
                     .put("key", EncString.encrypt(userKeyBytes, BitwardenEncrypted.stretch(master)))
                     .put("privateKey", EncString.encrypt(rsa.private.encoded, userKey))
-                    .put("organizations", JSONArray().put(JSONObject().put("id", "org-1").put("key", orgKeyEnc))))
+                    .put("organizations", JSONArray().put(JSONObject().put("id", "org-1").put("name", "Family").put("key", orgKeyEnc))))
+                .put("collections", JSONArray().put(JSONObject().put("id", "col-1").put("organizationId", "org-1").put("name", enc("Passkeys", orgKey))))
                 .put("ciphers", JSONArray()
                     // personal, user key
                     .put(JSONObject().put("type", 1).put("organizationId", JSONObject.NULL).put("key", JSONObject.NULL)
@@ -118,6 +119,15 @@ class VaultSyncTest {
                     // like Vaultwarden 1.37: required, and must be the signed-in account
                     if (cipher.optString("encryptedFor") != "user-1") return VaultSync.Http.Response(422, """{"message":"missing field `encryptedFor`"}""")
                     vault.getJSONArray("ciphers").put(cipher.put("id", "new-${vault.getJSONArray("ciphers").length()}"))
+                    VaultSync.Http.Response(200, cipher.toString())
+                }
+                url.endsWith("/api/ciphers/create") -> {
+                    val req = JSONObject(body)
+                    assertEquals("col-1", req.getJSONArray("collectionIds").getString(0))
+                    val cipher = req.getJSONObject("cipher")
+                    assertEquals("org-1", cipher.getString("organizationId"))
+                    if (cipher.optString("encryptedFor") != "user-1") return VaultSync.Http.Response(422, "{}")
+                    vault.getJSONArray("ciphers").put(cipher.put("id", "org-new"))
                     VaultSync.Http.Response(200, cipher.toString())
                 }
                 url.endsWith("/api/two-factor/send-email-login") -> {
@@ -226,5 +236,20 @@ class VaultSyncTest {
         assertEquals("refresh-2", again.refreshToken)
         val e = runCatching { sync.openWithKey("expired", first.vaultKey) }.exceptionOrNull()
         assertTrue(e is VaultSync.NeedsSignIn)
+    }
+
+    @Test fun uploadIntoAnOrganisationCollection() {
+        val server = Server()
+        val sync = VaultSync("https://vault.example.net", server, "d")
+        val session = sync.open(email, password, null)
+        val cols = sync.collections(session)
+        assertEquals(listOf("Family / Passkeys"), cols.map { it.label })
+        val pk = Bitwarden.parse("""{"items":[{"login":{"fido2Credentials":[{"credentialId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "keyValue":"${newPkcs8()}","rpId":"shared.example","userName":"sam","counter":"0","discoverable":"true"}]}}]}""").imported
+        val up = sync.upload(session, pk, into = cols[0])
+        assertEquals(pk, up.added)
+        // the other account reads it back through the organisation key
+        val after = Bitwarden.parse(sync.sync(email, password, null).exportJson).imported
+        assertEquals(pk[0].keyValuePkcs8, after.single { it.rpId == "shared.example" }.keyValuePkcs8)
     }
 }

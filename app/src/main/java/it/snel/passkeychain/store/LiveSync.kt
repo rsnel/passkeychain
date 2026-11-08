@@ -28,7 +28,9 @@ import java.util.Base64
  *  - pull: adds passkeys that are new in the vault since the last run. One you
  *    deleted on the phone is not brought back, and nothing is overwritten;
  *  - push: adds passkeys created on this phone that have no copy anywhere yet
- *    (not backed up) to the vault, as new items.
+ *    (not backed up) to the vault, as new items: in the account's own vault,
+ *    or in a chosen organisation collection (to share them with another
+ *    account, such as a main account, while this one holds only passkeys).
  *
  * Nothing is deleted on either side.
  */
@@ -104,6 +106,15 @@ object LiveSync {
             val session = vault.openWithKey(token, key)
             session.refreshToken?.let { p.edit().putString("token", seal(it.toByteArray())).apply() }
 
+            val collections = vault.collections(session)
+            p.edit().putString("collections", JSONArray(collections.map {
+                JSONObject().put("orgId", it.orgId).put("orgName", it.orgName).put("id", it.id).put("name", it.name)
+            }).toString()).apply()
+            val targetId = p.getString("target", null)
+            val target = targetId?.let { id -> collections.firstOrNull { it.id == id } }
+            if (targetId != null && target == null) throw VaultSync.Failure("The chosen collection is gone; choose where new passkeys go.")
+            stats["New passkeys go to"] = target?.label ?: "this account's vault"
+
             val inVault = vault.passkeys(session)
             val remote = Bitwarden.parse(inVault.exportJson).imported
             if (remote.isEmpty() && inVault.skipped.isNotEmpty())
@@ -119,7 +130,7 @@ object LiveSync {
             val pulled = remote.filter { it.credentialId !in known && it.credentialId !in localIds }
             // push: created here, no copy anywhere yet, not in the vault
             val toPush = local.filter { !it.backedUp && it.credentialId !in remoteIds }
-            val pushed = if (toPush.isEmpty()) emptyList() else vault.upload(session, toPush).also { up ->
+            val pushed = if (toPush.isEmpty()) emptyList() else vault.upload(session, toPush, into = target).also { up ->
                 if (up.failed.isNotEmpty()) stats["Last upload problem"] = up.failed.first()
             }.added
             if (pulled.isNotEmpty() || pushed.isNotEmpty()) {
@@ -161,6 +172,25 @@ object LiveSync {
             .putString("stats", JSONObject(final.stats).toString())
             .apply()
         _status.value = final
+    }
+
+    /** The organisation collections seen at the last run, for choosing where new passkeys go. */
+    fun collections(ctx: Context): List<VaultSync.Collection> = runCatching {
+        val a = JSONArray(prefs(ctx).getString("collections", "[]"))
+        (0 until a.length()).map { a.getJSONObject(it) }.map {
+            VaultSync.Collection(it.getString("orgId"), it.getString("orgName"), it.getString("id"), it.getString("name"))
+        }
+    }.getOrDefault(emptyList())
+
+    /** Where new passkeys go: a collection, or null for the account's own vault. */
+    fun target(ctx: Context): VaultSync.Collection? {
+        val id = prefs(ctx).getString("target", null) ?: return null
+        return collections(ctx).firstOrNull { it.id == id }
+    }
+
+    fun setTarget(ctx: Context, c: VaultSync.Collection?) {
+        prefs(ctx).edit().apply { if (c == null) remove("target") else putString("target", c.id) }.apply()
+        _status.value = _status.value.let { Status(it.light, it.message, it.time, it.stats + ("New passkeys go to" to (c?.label ?: "this account's vault"))) }
     }
 
     private fun count(n: Int) = if (n == 1) "1 passkey" else "$n passkeys"

@@ -152,19 +152,51 @@ class VaultSync(serverUrl: String, http: Http, private val deviceId: String) {
 
     class Upload(val added: List<Passkey>, val failed: List<String>)
 
+    /** Where new items can go besides the personal vault: an organisation's collection. */
+    data class Collection(val orgId: String, val orgName: String, val id: String, val name: String) {
+        val label get() = "$orgName / $name"
+    }
+
+    /** The collections of the account's organisations, with their names decrypted. */
+    fun collections(session: Session): List<Collection> {
+        val profile = session.vault.ci("profile") as? JSONObject ?: return emptyList()
+        val keys = orgKeys(profile, session.userKey)
+        val orgNames = (profile.ci("organizations") as? JSONArray)?.let { a ->
+            (0 until a.length()).mapNotNull { a.optJSONObject(it) }.associate { (it.ci("id")?.toString() ?: "") to (it.ci("name")?.toString() ?: "Organisation") }
+        }.orEmpty()
+        val list = session.vault.ci("collections") as? JSONArray ?: return emptyList()
+        return (0 until list.length()).mapNotNull { list.optJSONObject(it) }.mapNotNull { c ->
+            val org = c.ci("organizationId")?.toString() ?: return@mapNotNull null
+            val key = keys[org] ?: return@mapNotNull null
+            val name = runCatching { String(EncString.decrypt(c.ci("name").toString(), key), Charsets.UTF_8) }.getOrDefault("(unnamed)")
+            Collection(org, orgNames[org] ?: "Organisation", c.ci("id").toString(), name)
+        }.sortedBy { it.label.lowercase() }
+    }
+
     /**
      * Adds [passkeys] to the vault as new login items (one per site and account,
      * like Bitwarden's export), encrypted with the account's key. Only adds: the
      * caller passes passkeys the vault doesn't have yet.
      */
-    fun upload(session: Session, passkeys: List<Passkey>): Upload {
+    fun upload(session: Session, passkeys: List<Passkey>, into: Collection? = null): Upload {
         val added = mutableListOf<Passkey>()
         val failed = mutableListOf<String>()
+        // in an organisation: encrypted with its key, created with its collection (POST /ciphers/create)
+        val orgKey = into?.let {
+            val profile = session.vault.ci("profile") as JSONObject
+            orgKeys(profile, session.userKey)[it.orgId] ?: throw Failure("No key for the organisation ${it.orgName}.")
+        }
         for (group in passkeys.groupBy { it.rpId to it.userName }.values) {
             val item = JSONObject(Bitwarden.export(group)).getJSONArray("items").getJSONObject(0)
-            val r = http.post(
-                "$api/ciphers", JSON, newCipher(item, session.userKey, session.userId).toString(),
-                mapOf("Authorization" to "Bearer ${session.accessToken}"),
+            val auth = mapOf("Authorization" to "Bearer ${session.accessToken}")
+            val r = if (into == null) http.post("$api/ciphers", JSON, newCipher(item, session.userKey, session.userId).toString(), auth)
+            else http.post(
+                "$api/ciphers/create", JSON,
+                JSONObject()
+                    .put("cipher", newCipher(item, orgKey!!, session.userId).put("organizationId", into.orgId))
+                    .put("collectionIds", JSONArray().put(into.id))
+                    .toString(),
+                auth,
             )
             if (r.code in 200..299) added += group else failed += "${item.optString("name")}: ${errorMessage(r)}"
         }
@@ -318,20 +350,8 @@ class VaultSync(serverUrl: String, http: Http, private val deviceId: String) {
         /** The passkeys in a /api/sync answer, decrypted with the account's user key. */
         private fun decryptPasskeys(vault: JSONObject, userKey: Keys): Decrypted {
             val profile = vault.ci("profile") as? JSONObject ?: throw Failure("The vault has no profile.")
-            // organisation keys: RSA-encrypted with the user's private key
-            val orgKeys = HashMap<String, Keys>()
-            val orgs = profile.ci("organizations") as? JSONArray
+            val orgKeys = orgKeys(profile, userKey)
             val skipped = mutableListOf<String>()
-            if (orgs != null && orgs.length() > 0) {
-                val privateKey = profile.ci("privateKey")?.toString()?.let { EncString.decrypt(it, userKey) }
-                for (i in 0 until orgs.length()) {
-                    val org = orgs.getJSONObject(i)
-                    val id = org.ci("id")?.toString() ?: continue
-                    val key = org.ci("key")?.toString() ?: continue
-                    runCatching { keysOf(rsaDecrypt(key, privateKey ?: throw Failure("no private key"))) }
-                        .onSuccess { orgKeys[id] = it }
-                }
-            }
             val credentials = JSONArray()
             val ciphers = vault.ci("ciphers") as? JSONArray ?: JSONArray()
             for (i in 0 until ciphers.length()) {
@@ -405,6 +425,22 @@ class VaultSync(serverUrl: String, http: Http, private val deviceId: String) {
         private fun tokenSubject(jwt: String): String? = runCatching {
             JSONObject(String(Base64.getUrlDecoder().decode(jwt.split(".")[1].trimEnd('=')), Charsets.UTF_8)).optString("sub").ifBlank { null }
         }.getOrNull()
+
+        /** Organisation keys by organisation id: RSA-encrypted with the user's private key. */
+        private fun orgKeys(profile: JSONObject, userKey: Keys): Map<String, Keys> {
+            val orgKeys = HashMap<String, Keys>()
+            val orgs = profile.ci("organizations") as? JSONArray ?: return orgKeys
+            if (orgs.length() == 0) return orgKeys
+            val privateKey = runCatching { profile.ci("privateKey")?.toString()?.let { EncString.decrypt(it, userKey) } }.getOrNull()
+                ?: return orgKeys
+            for (i in 0 until orgs.length()) {
+                val org = orgs.getJSONObject(i)
+                val id = org.ci("id")?.toString() ?: continue
+                val key = org.ci("key")?.toString() ?: continue
+                runCatching { keysOf(rsaDecrypt(key, privateKey)) }.onSuccess { orgKeys[id] = it }
+            }
+            return orgKeys
+        }
 
         private fun keysOf(b: ByteArray): Keys {
             if (b.size != 64) throw Failure("unexpected key length ${b.size}")

@@ -523,6 +523,9 @@ private fun MainScreen(store: PasskeyStore) {
         onSyncNow = { LiveSync.kick(ctx, force = true) },
         onSetUp = { serverSheet = false; liveSetup = true },
         onTurnOff = { LiveSync.disable(ctx); serverSheet = false; scope.launch { snackbar.showSnackbar("Live sync is off; its vault key is deleted") } },
+        collections = remember(serverStatus.time) { LiveSync.collections(ctx) },
+        target = remember(serverStatus) { LiveSync.target(ctx) },
+        onTarget = { LiveSync.setTarget(ctx, it) },
     )
     if (liveSetup) VaultSyncDialog(VaultSettings(ctx), onDismiss = { liveSetup = false }, onSynced = { _, _, _ -> }, live = true)
     if (vaultExport) VaultSyncDialog(
