@@ -3,6 +3,7 @@ package it.snel.passkeychain.ui
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -183,8 +184,11 @@ private suspend fun importFromAnotherApp(activity: FragmentActivity, store: Pass
     "No app on this phone offers its passkeys for transfer yet."
 } catch (e: ImportCredentialsException) {
     "Import failed: ${e.message ?: e.javaClass.simpleName}"
-} catch (e: IllegalArgumentException) {
-    "Import failed: ${e.message}"
+} catch (e: kotlinx.coroutines.CancellationException) {
+    throw e
+} catch (e: Exception) {
+    // e.g. no Google Play services (LineageOS) or an older system: never crash over it
+    "Transfer from another app isn't available on this phone (${e.message ?: e.javaClass.simpleName})."
 }
 
 /**
@@ -959,11 +963,20 @@ private fun ImportDialog(onDismiss: () -> Unit, onFile: () -> Unit, onApp: () ->
                     headlineContent = { Text("From a file") },
                     supportingContent = { Text("A Bitwarden export (also password protected) or a Credential Exchange file") },
                 )
+                // Credential Exchange between apps exists from Android 14 on
+                val canTransfer = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
                 ListItem(
-                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onApp),
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(enabled = canTransfer, onClick = onApp),
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("From another app") },
-                    supportingContent = { Text("A password manager on this phone that offers its passkeys for transfer") },
+                    headlineContent = {
+                        Text("From another app", color = if (canTransfer) Color.Unspecified else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+                    },
+                    supportingContent = {
+                        Text(
+                            if (canTransfer) "A password manager on this phone that offers its passkeys for transfer"
+                            else "Needs Android 14 or newer",
+                        )
+                    },
                 )
                 ListItem(
                     modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onServer),
