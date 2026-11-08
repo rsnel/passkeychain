@@ -32,6 +32,7 @@ import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.io.OkHttpVault
 import it.snel.passkeychain.model.Passkey
 import it.snel.passkeychain.io.VaultSync
+import it.snel.passkeychain.store.LiveSync
 import it.snel.passkeychain.store.VaultSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,8 +52,11 @@ fun VaultSyncDialog(
     /** Export mode: these passkeys go to the vault, as far as it lacks them. */
     toVault: List<Passkey>? = null,
     onExported: (added: List<Passkey>, failed: List<String>, host: String) -> Unit = { _, _, _ -> },
+    /** Live sync setup: sign in once, then keep the vault key and token for syncing without the password. */
+    live: Boolean = false,
 ) {
     val exporting = toVault != null
+    val context = androidx.compose.ui.platform.LocalContext.current
     // export: after checking the vault, what would be added (and the open session to do it)
     var plan by remember { mutableStateOf<ExportPlan?>(null) }
     var server by remember { mutableStateOf(settings.server) }
@@ -77,6 +81,11 @@ fun VaultSyncDialog(
                 val session = withContext(Dispatchers.Default) { vault.open(email, password, token, second) }
                 withContext(Dispatchers.IO) { settings.save(vault.base, email, session.refreshToken) }
                 password = ""
+                if (live) {
+                    withContext(Dispatchers.IO) { LiveSync.enable(context, vault.base, email, session) }
+                    onDismiss()
+                    return@launch
+                }
                 val r = withContext(Dispatchers.Default) { vault.passkeys(session) }
                 val host = java.net.URI(vault.base).host
                 if (toVault == null) onSynced(r.exportJson, host, r.skipped.size)
@@ -162,11 +171,15 @@ fun VaultSyncDialog(
 
     AlertDialog(
         onDismissRequest = { if (busy == null) onDismiss() },
-        title = { Text(if (exporting) "Export to a server" else "Sync from a server") },
+        title = { Text(if (live) "Set up live sync" else if (exporting) "Export to a server" else "Sync from a server") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    if (exporting) "Adds your passkeys to your Bitwarden-compatible server, such as Vaultwarden, " +
+                    if (live) "Keeps the passkeys on this phone and in your Bitwarden-compatible server (such as Vaultwarden) in step: " +
+                        "new passkeys in the vault come to the phone, passkeys created on the phone go to the vault. Nothing is deleted on either side.\n\n" +
+                        "To sync without your master password, the app keeps the vault key, encrypted by Android's keystore like your passkeys. " +
+                        "That key also opens the rest of your vault, though the app only decrypts passkeys. Turning live sync off deletes it."
+                    else if (exporting) "Adds your passkeys to your Bitwarden-compatible server, such as Vaultwarden, " +
                         "as far as they aren't there yet. First the app checks the vault and shows what it would add. " +
                         "Your master password is not stored."
                     else "Fetches the passkeys from your Bitwarden-compatible server, such as Vaultwarden. " +
@@ -234,7 +247,7 @@ fun VaultSyncDialog(
                 enabled = busy == null && server.isNotBlank() && email.isNotBlank() && password.isNotEmpty() &&
                     (providers.isEmpty() || code.isNotBlank()),
                 onClick = ::sync,
-            ) { Text(if (exporting) "Check" else "Sync") }
+            ) { Text(if (live) "Turn on" else if (exporting) "Check" else "Sync") }
         },
         dismissButton = { TextButton(enabled = busy == null, onClick = onDismiss) { Text("Cancel") } },
     )

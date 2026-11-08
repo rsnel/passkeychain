@@ -107,6 +107,14 @@ The debug app has a grey icon, so the two are easy to tell apart.
   Bitwarden server…* first checks the vault, shows which passkeys it lacks,
   and after confirmation adds those as new login items (encrypted like
   Bitwarden's own apps do). It never changes or deletes an existing item.
+- **Live sync** with that server: tap the status light at the top right
+  (grey: off, green: in sync, yellow: unexpected answer or sign in again,
+  red: no connection) to set it up or see the server's details. It syncs when
+  the app opens (at most every 5 minutes), after a passkey is created and on
+  request: passkeys new in the vault come to the phone, passkeys created on
+  the phone go to the vault. Nothing is deleted on either side. To work
+  without the master password it keeps the vault key and the server's token,
+  encrypted by the Android Keystore; turning it off deletes both.
 - **Export** writes Bitwarden's format (optionally password protected).
   PassKeyChain does not offer its passkeys to *other apps* through Android's
   credential transfer: that would hand every private key to another app

@@ -215,4 +215,16 @@ class VaultSyncTest {
         assertEquals(missing[0].keyValuePkcs8, back.keyValuePkcs8)
         assertEquals("Sam", back.userDisplayName)
     }
+
+    @Test fun liveSyncOpensWithSavedKeyAndToken() {
+        val server = Server()
+        val sync = VaultSync("https://vault.example.net", server, "d")
+        val first = sync.open(email, password, null)
+        // later: no password, just what live sync keeps
+        val again = sync.openWithKey(first.refreshToken!!, first.vaultKey)
+        assertEquals(2, sync.passkeys(again).passkeyCount)
+        assertEquals("refresh-2", again.refreshToken)
+        val e = runCatching { sync.openWithKey("expired", first.vaultKey) }.exceptionOrNull()
+        assertTrue(e is VaultSync.NeedsSignIn)
+    }
 }

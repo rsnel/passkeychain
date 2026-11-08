@@ -79,6 +79,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -106,6 +107,7 @@ import androidx.compose.ui.unit.dp
 import it.snel.passkeychain.R
 import it.snel.passkeychain.hybrid.HybridSignInActivity
 import it.snel.passkeychain.hybrid.TunnelSettings
+import it.snel.passkeychain.store.LiveSync
 import it.snel.passkeychain.store.VaultSettings
 import it.snel.passkeychain.io.Bitwarden
 import it.snel.passkeychain.io.Cxf
@@ -213,6 +215,12 @@ private fun MainScreen(store: PasskeyStore) {
     var tunnelDialog by remember { mutableStateOf(false) }
     var vaultDialog by remember { mutableStateOf(false) }
     var vaultExport by remember { mutableStateOf(false) }
+    var serverSheet by remember { mutableStateOf(false) }
+    var liveSetup by remember { mutableStateOf(false) }
+    remember { LiveSync.init(ctx) }
+    val serverStatus by LiveSync.status.collectAsState()
+    // a sync may have added passkeys: show them
+    LaunchedEffect(serverStatus.time) { passkeys = withContext(Dispatchers.IO) { store.load() } }
     var exportPassword by remember { mutableStateOf<String?>(null) } // null: unencrypted
     var pendingImport by remember { mutableStateOf<PendingImport?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -227,6 +235,7 @@ private fun MainScreen(store: PasskeyStore) {
             if (event == Lifecycle.Event.ON_RESUME) scope.launch {
                 passkeys = withContext(Dispatchers.IO) { store.load() }
                 loaded = true
+                LiveSync.kick(ctx)
             }
         }
         activity.lifecycle.addObserver(observer)
@@ -303,6 +312,7 @@ private fun MainScreen(store: PasskeyStore) {
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
                 ),
                 actions = {
+                    ServerLed(serverStatus) { serverSheet = true }
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, "More options") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
@@ -507,6 +517,14 @@ private fun MainScreen(store: PasskeyStore) {
         },
         onServer = { exportChoice = false; vaultExport = true },
     )
+    if (serverSheet) ServerSheet(
+        serverStatus,
+        onDismiss = { serverSheet = false },
+        onSyncNow = { LiveSync.kick(ctx, force = true) },
+        onSetUp = { serverSheet = false; liveSetup = true },
+        onTurnOff = { LiveSync.disable(ctx); serverSheet = false; scope.launch { snackbar.showSnackbar("Live sync is off; its vault key is deleted") } },
+    )
+    if (liveSetup) VaultSyncDialog(VaultSettings(ctx), onDismiss = { liveSetup = false }, onSynced = { _, _, _ -> }, live = true)
     if (vaultExport) VaultSyncDialog(
         VaultSettings(ctx),
         onDismiss = { vaultExport = false },

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import it.snel.passkeychain.store.LiveSync
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -420,6 +421,7 @@ class HybridSignInActivity : FragmentActivity() {
                         // worth noting only when it was not Google's server
                         transport.usedHost?.takeIf { it != TunnelDomains.hostname(TunnelDomains.GOOGLE) }?.let { "Via $it" } ?: "",
                     )
+                        .also { if (createdPasskey) LiveSync.kick(applicationContext, force = true) }
                     CtapAuthenticator.CTAP2_ERR_CREDENTIAL_EXCLUDED -> record(HistoryEntry.Outcome.Failed, "Already has a passkey on this phone.")
                     CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED -> record(HistoryEntry.Outcome.Denied)
                     CtapAuthenticator.CTAP2_ERR_NO_CREDENTIALS -> record(HistoryEntry.Outcome.Failed, "No passkey for this site.")

@@ -84,7 +84,40 @@ class VaultSync(serverUrl: String, http: Http, private val deviceId: String) {
         val refreshToken: String?,
         /** The account id (profile id, else the token's "sub"): new items say they are encrypted for it. */
         internal val userId: String?,
-    )
+    ) {
+        /** The vault key (64 bytes), for live sync to keep (Keystore-encrypted) instead of the master password. */
+        val vaultKey: ByteArray get() = userKey.enc + userKey.mac
+    }
+
+    /**
+     * Opens the vault without the master password: a saved refresh token for
+     * access, and a saved [vaultKey] to decrypt. [NeedsSignIn] if the server no
+     * longer accepts the token.
+     */
+    fun openWithKey(refreshToken: String, vaultKey: ByteArray): Session {
+        val tokens = try {
+            refresh(refreshToken)
+        } catch (e: Failure) {
+            if (e.cause is java.io.IOException) throw e
+            throw NeedsSignIn("The server wants you to sign in again (${e.message}).")
+        }
+        val vault = fetchVault(tokens.access)
+        val profile = vault.ci("profile") as? JSONObject ?: throw Failure("The vault has no profile.")
+        val userId = profile.ci("id")?.takeIf { it != JSONObject.NULL }?.toString() ?: tokenSubject(tokens.access)
+        return Session(vault, keysOf(vaultKey), tokens.access, tokens.refresh ?: refreshToken, userId)
+    }
+
+    class NeedsSignIn(message: String) : Exception(message)
+
+    /** What the server says about itself (GET /api/config): name and version, if it tells. */
+    fun serverInfo(): String? = runCatching {
+        val r = http.get("$api/config", emptyMap())
+        if (r.code !in 200..299) return null
+        val o = JSONObject(r.body)
+        val name = (o.ci("server") as? JSONObject)?.ci("name")?.toString()
+        val version = o.ci("version")?.toString()
+        listOfNotNull(name ?: "Bitwarden-compatible", version).joinToString(" ")
+    }.getOrNull()
 
     /** Signs in and fetches the vault; [WrongPassword] if the password doesn't open it. */
     fun open(email: String, password: String, savedRefreshToken: String?, twoFactor: TwoFactor? = null): Session {
