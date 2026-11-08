@@ -1011,14 +1011,18 @@ private fun AboutDialog(version: String, onDismiss: () -> Unit) {
         icon = { AppIcon(56.dp) },
         title = { Text("PassKeyChain") },
         text = {
+            val uri = androidx.compose.ui.platform.LocalUriHandler.current
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text(version, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 Text(
                     "Keeps your passkeys on your own phone, encrypted with the Android Keystore.\n\n" +
-                        "Free software under the GNU GPL v3.\ngithub.com/rsnel/passkeychain",
+                        "Free software under the GNU GPL v3.",
                     textAlign = TextAlign.Center,
                 )
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = { uri.openUri("https://rsnel.github.io/passkeychain/") }) { Text("Website: rsnel.github.io/passkeychain") }
+                TextButton(onClick = { uri.openUri("https://github.com/rsnel/passkeychain") }) { Text("Source code on GitHub") }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
