@@ -110,6 +110,13 @@ class VaultSyncTest {
                         }
                     }
                 }
+                url.endsWith("/api/ciphers") -> {
+                    assertEquals("Bearer access-1", headers["Authorization"])
+                    val cipher = JSONObject(body)
+                    assertEquals(1, cipher.getInt("type"))
+                    vault.getJSONArray("ciphers").put(cipher.put("id", "new-${vault.getJSONArray("ciphers").length()}"))
+                    VaultSync.Http.Response(200, cipher.toString())
+                }
                 url.endsWith("/api/two-factor/send-email-login") -> {
                     assertEquals(expectedHash, JSONObject(body).getString("masterPasswordHash"))
                     VaultSync.Http.Response(200, "")
@@ -172,5 +179,36 @@ class VaultSyncTest {
         assertEquals("https://vault.example.net", VaultSync.normalize(" vault.example.net/ "))
         assertEquals("https://vault.example.net/bw", VaultSync.normalize("https://vault.example.net/bw/"))
         assertTrue(runCatching { VaultSync.normalize("http://vault.example.net") }.exceptionOrNull() is VaultSync.Failure)
+    }
+
+    @Test fun uploadAddsOnlyWhatTheVaultLacksAndReadsBack() {
+        val server = Server()
+        val sync = VaultSync("https://vault.example.net", server, "d")
+        val session = sync.open(email, password, null)
+        val inVault = Bitwarden.parse(sync.passkeys(session).exportJson).imported
+        val mine = Bitwarden.parse(
+            Bitwarden.export(listOf()).let {
+                """{"items":[{"login":{"username":"sam","fido2Credentials":[{"credentialId":"9a8b7c6d-5e4f-3a2b-1c0d-0e1f2a3b4c5d",
+                "keyValue":"${newPkcs8()}","rpId":"webauthn.example","userHandle":"aGFuZGxl","userName":"sam",
+                "rpName":"Example","userDisplayName":"Sam","counter":"0","discoverable":"true","creationDate":""}]}}]}"""
+            },
+        ).imported
+        val local = inVault + mine
+        val have = inVault.map { it.credentialId }.toSet()
+        val missing = local.filter { it.credentialId !in have }
+        assertEquals(1, missing.size)
+        val up = sync.upload(session, missing)
+        assertEquals(missing, up.added)
+        assertTrue(up.failed.isEmpty())
+        // the server stored it encrypted: no plain text of the key in what was sent
+        val stored = server.vault.getJSONArray("ciphers").let { it.getJSONObject(it.length() - 1) }
+        assertTrue(!stored.toString().contains("webauthn.example"))
+        // and it reads back as the same passkey
+        val after = Bitwarden.parse(sync.sync(email, password, null).exportJson).imported
+        assertEquals(3, after.size)
+        val back = after.single { it.rpId == "webauthn.example" }
+        assertEquals(missing[0].credentialId, back.credentialId)
+        assertEquals(missing[0].keyValuePkcs8, back.keyValuePkcs8)
+        assertEquals("Sam", back.userDisplayName)
     }
 }

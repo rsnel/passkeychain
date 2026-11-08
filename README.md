@@ -98,11 +98,15 @@ The debug app has a grey icon, so the two are easy to tell apart.
   *Import passkeys… → From a server* signs in like Bitwarden's own apps
   (server address, email, master password, and an authenticator or email
   code if the account has one), fetches the vault and decrypts only the
-  passkeys (`io/VaultSync.kt`). Read-only: nothing changes on the server. The
+  passkeys (`io/VaultSync.kt`). Nothing changes on the server. The
   master password and vault keys are not stored; the server's refresh token
   is (Keystore-encrypted), so the next sync needs no second code. Tested
   against a simulated server so far; Bitwarden's terms don't cover
   unofficial clients, so a self-hosted Vaultwarden is the safer target.
+- **Export to that server**: *Export → Or add them to your Vaultwarden or
+  Bitwarden server…* first checks the vault, shows which passkeys it lacks,
+  and after confirmation adds those as new login items (encrypted like
+  Bitwarden's own apps do). It never changes or deletes an existing item.
 - **Export** writes Bitwarden's format (optionally password protected).
   PassKeyChain does not offer its passkeys to *other apps* through Android's
   credential transfer: that would hand every private key to another app

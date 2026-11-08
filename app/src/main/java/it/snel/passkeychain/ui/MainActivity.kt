@@ -212,6 +212,7 @@ private fun MainScreen(store: PasskeyStore) {
     var importChoice by remember { mutableStateOf(false) }
     var tunnelDialog by remember { mutableStateOf(false) }
     var vaultDialog by remember { mutableStateOf(false) }
+    var vaultExport by remember { mutableStateOf(false) }
     var exportPassword by remember { mutableStateOf<String?>(null) } // null: unencrypted
     var pendingImport by remember { mutableStateOf<PendingImport?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -489,7 +490,7 @@ private fun MainScreen(store: PasskeyStore) {
             vaultDialog = false
             scope.launch {
                 val msg = withContext(Dispatchers.IO) {
-                    runCatching { importJson(ctx, store, json, "Synced from $host") }.getOrElse { "Sync failed: ${it.message}" }
+                    runCatching { importJson(ctx, store, json, "from $host") }.getOrElse { "Sync failed: ${it.message}" }
                 }
                 passkeys = withContext(Dispatchers.IO) { store.load() }
                 snackbar.showSnackbar(if (skipped > 0) "$msg · $skipped item(s) could not be decrypted" else msg)
@@ -503,6 +504,32 @@ private fun MainScreen(store: PasskeyStore) {
             exportChoice = false
             exportPassword = password
             exportLauncher.launch(if (password != null) "passkeychain-bitwarden-encrypted.json" else "passkeychain-bitwarden.json")
+        },
+        onServer = { exportChoice = false; vaultExport = true },
+    )
+    if (vaultExport) VaultSyncDialog(
+        VaultSettings(ctx),
+        onDismiss = { vaultExport = false },
+        onSynced = { _, _, _ -> },
+        toVault = passkeys,
+        onExported = { added, failed, host ->
+            vaultExport = false
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    if (added.isNotEmpty()) {
+                        // these now have a copy in the vault (backup state)
+                        val ids = added.map { it.credentialId }.toSet()
+                        store.save(store.load().map { if (it.credentialId in ids) it.copy(backedUp = true) else it })
+                        history.add(HistoryEntry.change(HistoryEntry.Outcome.Exported, account = "to $host",
+                            detail = if (added.size == 1) "1 passkey added to the vault" else "${added.size} passkeys added to the vault"))
+                    }
+                }
+                passkeys = withContext(Dispatchers.IO) { store.load() }
+                snackbar.showSnackbar(
+                    (if (added.size == 1) "Added 1 passkey to $host" else "Added ${added.size} passkeys to $host") +
+                        if (failed.isNotEmpty()) " · ${failed.size} failed: ${failed.first()}" else "",
+                )
+            }
         },
     )
 
@@ -738,7 +765,7 @@ private fun HistorySheet(entries: List<HistoryEntry>, onDismiss: () -> Unit, onC
                         HistoryEntry.Outcome.Deleted -> Triple("Passkey deleted", Icons.Rounded.Delete, grey)
                         HistoryEntry.Outcome.Restored -> Triple("Passkey restored (undo)", Icons.Rounded.Check, green)
                         HistoryEntry.Outcome.Imported -> Triple("Passkeys imported ${e.account}", null, indigo)
-                        HistoryEntry.Outcome.Exported -> Triple("Passkeys exported", null, indigo)
+                        HistoryEntry.Outcome.Exported -> Triple("Passkeys exported ${e.account}".trim(), null, indigo)
                     }
                     val isTransfer = e.outcome == HistoryEntry.Outcome.Imported || e.outcome == HistoryEntry.Outcome.Exported
                     ListItem(
@@ -978,7 +1005,7 @@ private fun AboutDialog(version: String, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun ExportDialog(onDismiss: () -> Unit, onExport: (password: String?) -> Unit) {
+private fun ExportDialog(onDismiss: () -> Unit, onExport: (password: String?) -> Unit, onServer: () -> Unit) {
     var encrypted by remember { mutableStateOf(true) }
     var password by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("") }
@@ -1031,6 +1058,9 @@ private fun ExportDialog(onDismiss: () -> Unit, onExport: (password: String?) ->
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider()
+                TextButton(onClick = onServer) { Text("Or add them to your Vaultwarden or Bitwarden server…") }
             }
         },
         confirmButton = {

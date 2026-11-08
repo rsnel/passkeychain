@@ -2,6 +2,7 @@ package it.snel.passkeychain.io
 
 import it.snel.passkeychain.io.BitwardenEncrypted.EncString
 import it.snel.passkeychain.io.BitwardenEncrypted.Keys
+import it.snel.passkeychain.model.Passkey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
@@ -29,7 +30,9 @@ import javax.crypto.spec.PSource
  *     decrypted.
  *
  * The result is a Bitwarden export document with just the passkeys, for the
- * normal import. Nothing is written to the server.
+ * normal import. [upload] goes the other way, carefully: it only adds new
+ * login items for passkeys the vault doesn't have, and never changes or
+ * deletes an existing item.
  */
 class VaultSync(serverUrl: String, private val http: Http, private val deviceId: String) {
 
@@ -62,16 +65,67 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
     private val identity = "$base/identity"
     private val api = "$base/api"
 
-    /** Signs in, fetches the vault and decrypts its passkeys. */
-    fun sync(email: String, password: String, savedRefreshToken: String?, twoFactor: TwoFactor? = null): Result {
+    /**
+     * Signed in, with the vault fetched and its key unlocked. The keys live only
+     * in memory, as long as this object.
+     */
+    class Session internal constructor(
+        internal val vault: JSONObject,
+        internal val userKey: Keys,
+        internal val accessToken: String,
+        /** To save for the next sync; null if the server gave none. */
+        val refreshToken: String?,
+    )
+
+    /** Signs in and fetches the vault; [WrongPassword] if the password doesn't open it. */
+    fun open(email: String, password: String, savedRefreshToken: String?, twoFactor: TwoFactor? = null): Session {
         val account = email.trim().lowercase()
         val kdf = prelogin(account)
         val master = BitwardenEncrypted.masterKey(password, account, kdf)
         val tokens = savedRefreshToken?.let { runCatching { refresh(it) }.getOrNull() }
             ?: login(account, loginHash(master, password), twoFactor)
         val vault = fetchVault(tokens.access)
-        val (export, count, skipped) = decryptPasskeys(vault, BitwardenEncrypted.stretch(master))
-        return Result(export, count, skipped, tokens.refresh ?: savedRefreshToken)
+        val profile = vault.ci("profile") as? JSONObject ?: throw Failure("The vault has no profile.")
+        val userKey = try {
+            keysOf(EncString.decrypt(profile.ci("key").toString(), BitwardenEncrypted.stretch(master)))
+        } catch (e: IllegalArgumentException) {
+            throw WrongPassword()
+        }
+        return Session(vault, userKey, tokens.access, tokens.refresh ?: savedRefreshToken)
+    }
+
+    /** Signs in, fetches the vault and decrypts its passkeys. */
+    fun sync(email: String, password: String, savedRefreshToken: String?, twoFactor: TwoFactor? = null): Result =
+        open(email, password, savedRefreshToken, twoFactor).let { session ->
+            val (export, count, skipped) = decryptPasskeys(session.vault, session.userKey)
+            Result(export, count, skipped, session.refreshToken)
+        }
+
+    /** The passkeys in the vault of [session], as a Bitwarden export. */
+    fun passkeys(session: Session): Result {
+        val (export, count, skipped) = decryptPasskeys(session.vault, session.userKey)
+        return Result(export, count, skipped, session.refreshToken)
+    }
+
+    class Upload(val added: List<Passkey>, val failed: List<String>)
+
+    /**
+     * Adds [passkeys] to the vault as new login items (one per site and account,
+     * like Bitwarden's export), encrypted with the account's key. Only adds: the
+     * caller passes passkeys the vault doesn't have yet.
+     */
+    fun upload(session: Session, passkeys: List<Passkey>): Upload {
+        val added = mutableListOf<Passkey>()
+        val failed = mutableListOf<String>()
+        for (group in passkeys.groupBy { it.rpId to it.userName }.values) {
+            val item = JSONObject(Bitwarden.export(group)).getJSONArray("items").getJSONObject(0)
+            val r = http.post(
+                "$api/ciphers", JSON, newCipher(item, session.userKey).toString(),
+                mapOf("Authorization" to "Bearer ${session.accessToken}"),
+            )
+            if (r.code in 200..299) added += group else failed += "${item.optString("name")}: ${errorMessage(r)}"
+        }
+        return Upload(added, failed)
     }
 
     /** Asks the server to email a login code (second factor "Email"). */
@@ -216,14 +270,9 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
 
         private data class Decrypted(val exportJson: String, val count: Int, val skipped: List<String>)
 
-        /** The passkeys in a /api/sync answer, decrypted with the account's stretched master key. */
-        private fun decryptPasskeys(vault: JSONObject, stretched: Keys): Decrypted {
+        /** The passkeys in a /api/sync answer, decrypted with the account's user key. */
+        private fun decryptPasskeys(vault: JSONObject, userKey: Keys): Decrypted {
             val profile = vault.ci("profile") as? JSONObject ?: throw Failure("The vault has no profile.")
-            val userKey = try {
-                keysOf(EncString.decrypt(profile.ci("key").toString(), stretched))
-            } catch (e: IllegalArgumentException) {
-                throw WrongPassword()
-            }
             // organisation keys: RSA-encrypted with the user's private key
             val orgKeys = HashMap<String, Keys>()
             val orgs = profile.ci("organizations") as? JSONArray
@@ -269,6 +318,40 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
                 JSONArray().put(JSONObject().put("type", 1).put("login", JSONObject().put("fido2Credentials", credentials))),
             )
             return Decrypted(export.toString(), credentials.length(), skipped)
+        }
+
+        /** A Bitwarden export item turned into a new-cipher request: every text field encrypted. */
+        private fun newCipher(item: JSONObject, key: Keys): JSONObject {
+            fun e(v: Any?): Any = if (v == null || v == JSONObject.NULL || v.toString().isEmpty()) JSONObject.NULL
+                else EncString.encrypt(v.toString().toByteArray(Charsets.UTF_8), key)
+            val login = item.getJSONObject("login")
+            val credentials = JSONArray()
+            val src = login.getJSONArray("fido2Credentials")
+            for (j in 0 until src.length()) {
+                val f = src.getJSONObject(j)
+                val out = JSONObject()
+                for (field in CREDENTIAL_FIELDS) out.put(field, e(f.opt(field)))
+                out.put("creationDate", f.optString("creationDate").ifBlank { java.time.Instant.now().toString() })
+                credentials.put(out)
+            }
+            val uris = JSONArray()
+            login.optJSONArray("uris")?.let { a ->
+                for (j in 0 until a.length()) uris.put(JSONObject().put("uri", e(a.getJSONObject(j).opt("uri"))).put("match", JSONObject.NULL))
+            }
+            return JSONObject()
+                .put("type", 1)
+                .put("organizationId", JSONObject.NULL)
+                .put("folderId", JSONObject.NULL)
+                .put("favorite", false)
+                .put("reprompt", 0)
+                .put("name", e(item.optString("name").ifBlank { "Passkey" }))
+                .put("notes", JSONObject.NULL)
+                .put("login", JSONObject()
+                    .put("username", e(login.opt("username")))
+                    .put("password", JSONObject.NULL)
+                    .put("totp", JSONObject.NULL)
+                    .put("uris", uris)
+                    .put("fido2Credentials", credentials))
         }
 
         private fun keysOf(b: ByteArray): Keys {
