@@ -2,3 +2,4 @@
 - Live sync can share new passkeys through an organisation collection
 - Server status light: green in sync, yellow needs attention, red no connection
 - New logo: the middle key hangs on its own ring
+- Update check tries again when GitHub hiccups, and says so if it keeps failing

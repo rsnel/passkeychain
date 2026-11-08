@@ -69,24 +69,29 @@ class UpdateChecker(private val context: Context) {
 
     private fun latestDebug(): Release {
         // CI replaces the JSON with --clobber (delete, then upload): for a
-        // moment it is missing, so a 404 is tried again before believing it
+        // moment it is missing, so a 404 is tried again before believing it.
+        // GitHub's own hiccups (5xx, 429) are tried again too, with longer waits.
         var body: String? = null
-        for (attempt in 1..3) {
+        var lastCode = 0
+        for (attempt in 1..RETRIES) {
             val conn = open("$REPO/releases/download/$DEBUG_TAG/passkeychain-debug.json")
             conn.setRequestProperty("Cache-Control", "no-cache")
+            lastCode = conn.responseCode
             body = try {
-                when (conn.responseCode) {
-                    404 -> null
-                    in 200..299 -> conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-                    else -> throw IOException("Unexpected answer from GitHub (HTTP ${conn.responseCode})")
+                when {
+                    lastCode == 404 || transient(lastCode) -> null
+                    lastCode in 200..299 -> conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+                    else -> throw IOException("Unexpected answer from GitHub (HTTP $lastCode)")
                 }
             } finally {
                 conn.disconnect()
             }
             if (body != null) break
-            if (attempt < 3) Thread.sleep(2_000)
+            if (attempt < RETRIES) Thread.sleep(backoff(attempt))
         }
-        if (body == null) throw IOException("No debug build has been published yet")
+        if (body == null) throw IOException(
+            if (transient(lastCode)) gitHubTrouble(lastCode) else "No debug build has been published yet",
+        )
         return try {
             val o = JSONObject(body)
             Release(
@@ -129,6 +134,15 @@ class UpdateChecker(private val context: Context) {
     }
 
     private fun latestRelease(): Release {
+        var attempt = 1
+        while (true) {
+            val code = open("$REPO/releases/latest").apply { instanceFollowRedirects = false }.let { c ->
+                try { c.responseCode } finally { c.disconnect() }
+            }
+            if (!transient(code)) break
+            if (attempt == RETRIES) throw IOException(gitHubTrouble(code))
+            Thread.sleep(backoff(attempt++))
+        }
         val conn = open("$REPO/releases/latest").apply { instanceFollowRedirects = false }
         val (code, location) = try {
             conn.responseCode to conn.getHeaderField("Location")
@@ -157,8 +171,15 @@ class UpdateChecker(private val context: Context) {
     suspend fun download(release: Release, onProgress: (Int) -> Unit = {}): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
         val out = File(dir, "passkeychain-${release.tag}.apk")
-        val conn = open(release.apkUrl)
+        var conn = open(release.apkUrl)
+        var attempt = 1
+        while (transient(conn.responseCode) && attempt < RETRIES) {
+            conn.disconnect()
+            Thread.sleep(backoff(attempt++))
+            conn = open(release.apkUrl)
+        }
         try {
+            if (transient(conn.responseCode)) throw IOException(gitHubTrouble(conn.responseCode))
             if (conn.responseCode !in 200..299) throw IOException("Download failed (HTTP ${conn.responseCode})")
             val total = conn.contentLengthLong
             var done = 0L
@@ -212,6 +233,17 @@ class UpdateChecker(private val context: Context) {
         }
 
     companion object {
+        private const val RETRIES = 4
+
+        /** GitHub's own trouble, worth trying again: a server error (502, 503, 504, …) or "too many requests". */
+        fun transient(code: Int) = code == 429 || code in 500..599
+
+        /** 2, 4, 8 seconds. */
+        private fun backoff(attempt: Int) = 2_000L shl (attempt - 1)
+
+        fun gitHubTrouble(code: Int) =
+            "GitHub isn't answering properly right now (HTTP $code, a problem on GitHub's side). Try again in a few minutes."
+
         const val REPO = "https://github.com/rsnel/passkeychain"
         const val DEBUG_TAG = "debug"
         private const val API = "https://api.github.com/repos/rsnel/passkeychain"
