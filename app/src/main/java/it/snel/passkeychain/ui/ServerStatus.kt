@@ -80,7 +80,8 @@ fun ServerSheet(status: LiveSync.Status, onDismiss: () -> Unit, onSyncNow: () ->
             if (status.light == LiveSync.Light.Off) {
                 Text(
                     "Keep the passkeys on this phone and in your own Vaultwarden or Bitwarden server in step. " +
-                        "New passkeys in the vault come to the phone; passkeys created on the phone go to the vault. Nothing is deleted.",
+                        "New passkeys in the vault come to the phone; passkeys created on the phone go to the vault. Nothing is deleted.\n\n" +
+                        "Consider a separate Bitwarden account just for passkeys: live sync keeps that account's vault key on the phone.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Button(onClick = onSetUp, modifier = Modifier.fillMaxWidth()) { Text("Set up live sync") }

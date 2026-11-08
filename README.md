@@ -114,7 +114,10 @@ The debug app has a grey icon, so the two are easy to tell apart.
   request: passkeys new in the vault come to the phone, passkeys created on
   the phone go to the vault. Nothing is deleted on either side. To work
   without the master password it keeps the vault key and the server's token,
-  encrypted by the Android Keystore; turning it off deletes both.
+  encrypted by the Android Keystore; turning it off deletes both. Consider a
+  separate Bitwarden account that holds only passkeys: the stored key then
+  opens nothing else. (A Bitwarden organisation doesn't separate them: an
+  account's key opens all of its organisations too.)
 - **Export** writes Bitwarden's format (optionally password protected).
   PassKeyChain does not offer its passkeys to *other apps* through Android's
   credential transfer: that would hand every private key to another app

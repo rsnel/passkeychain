@@ -65,6 +65,7 @@
   .shot img{width:100%;height:auto;display:block}
   .shot p{text-align:center;color:var(--muted);font-size:14px;margin:10px 0 0}
   .shot-row.two{grid-template-columns:repeat(2,1fr);max-width:66%;margin:0 auto}
+  .hero .note.bitwarden{margin:0 0 22px}
   .own{display:grid;grid-template-columns:1fr 300px;gap:40px;align-items:center}
   .own p{margin:0 0 14px}
   .own code{font-size:.92em}
@@ -117,6 +118,7 @@
       <p class="eyebrow">Passkey sovereignty</p>
       <h1>Your passkeys.<br>Your phone.<br>Your call.</h1>
       <p class="lede">A passkey is a key, and a key should belong to the person who uses it. PassKeyChain keeps your passkeys on a phone <em>you</em> choose, under <em>your</em> control: sign in with them on your computer or on the phone itself, and take them with you whenever you want.</p>
+      <p class="note bitwarden">🔑 <strong>Passkeys in Bitwarden?</strong> PassKeyChain lets you use them for hybrid FIDO sign-in: scan the QR code your computer’s browser shows, and your phone signs in with the passkey from your Bitwarden vault. Works on Android 9 and newer.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/rsnel/passkeychain/releases/latest">⬇ Download the latest release</a>
         <a class="btn btn-ghost" href="https://github.com/rsnel/passkeychain">View source on GitHub</a>
@@ -124,7 +126,7 @@
       <div class="pills">
         <span class="pill">GPLv3</span>
         <span class="pill">Android 9+ (API 28)</span>
-        <span class="pill">No account, no cloud</span>
+        <span class="pill">No account needed</span>
         <span class="pill">Keystore-encrypted</span>
         <span class="pill">Sign in on your computer</span>
         <span class="pill">Open import &amp; export</span>
@@ -294,6 +296,15 @@
     </div>
 
     <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the open protocol that Android phones and iPhones use for this. Because it is open, an independent app can speak it too: PassKeyChain does all eight steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way. Passkey sovereignty in practice: your key, your phone, the same front door as everyone else.</p>
+  </div>
+</section>
+
+<section id="own-server">
+  <div class="wrap">
+    <h2>Your own Vaultwarden or Bitwarden server</h2>
+    <p class="sub">Bring passkeys in from your vault, add new ones to it, or keep both in step.</p>
+    <p>PassKeyChain signs in to a Bitwarden-compatible server the way Bitwarden’s own apps do, with your server address, email and master password (and a code, if your account asks for one). It decrypts only the passkeys; your passwords and notes stay encrypted. <strong>Import</strong> fetches them; <strong>export</strong> first shows which passkeys the vault lacks and adds only those, as new items. <strong>Live sync</strong> keeps both in step, with a status light in the app: passkeys new in the vault come to the phone, passkeys created on the phone go to the vault, and nothing is deleted on either side.</p>
+    <p class="note">💡 <strong>Tip: a separate account for passkeys.</strong> Live sync keeps your vault key on the phone (encrypted by Android’s keystore), and that key opens everything in the account. Use a separate Bitwarden account that holds only your passkeys, so it opens nothing else. A Bitwarden organisation doesn’t separate them: an account’s key opens all of its organisations too.</p>
   </div>
 </section>
 

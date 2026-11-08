@@ -178,7 +178,9 @@ fun VaultSyncDialog(
                     if (live) "Keeps the passkeys on this phone and in your Bitwarden-compatible server (such as Vaultwarden) in step: " +
                         "new passkeys in the vault come to the phone, passkeys created on the phone go to the vault. Nothing is deleted on either side.\n\n" +
                         "To sync without your master password, the app keeps the vault key, encrypted by Android's keystore like your passkeys. " +
-                        "That key also opens the rest of your vault, though the app only decrypts passkeys. Turning live sync off deletes it."
+                        "That key also opens the rest of your vault, though the app only decrypts passkeys. Turning live sync off deletes it.\n\n" +
+                        "Tip: use a separate Bitwarden account that holds only your passkeys, so the stored key opens nothing else. " +
+                        "(An organisation doesn't separate them: the key opens all of an account's organisations too.)"
                     else if (exporting) "Adds your passkeys to your Bitwarden-compatible server, such as Vaultwarden, " +
                         "as far as they aren't there yet. First the app checks the vault and shows what it would add. " +
                         "Your master password is not stored."
