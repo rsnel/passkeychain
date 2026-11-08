@@ -12,8 +12,10 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
+import it.snel.passkeychain.util.Dbg
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import java.net.URLDecoder
 
 /**
@@ -69,29 +71,15 @@ class UpdateChecker(private val context: Context) {
 
     private fun latestDebug(): Release {
         // CI replaces the JSON with --clobber (delete, then upload): for a
-        // moment it is missing, so a 404 is tried again before believing it.
-        // GitHub's own hiccups (5xx, 429) are tried again too, with longer waits.
-        var body: String? = null
-        var lastCode = 0
-        for (attempt in 1..RETRIES) {
-            val conn = open("$REPO/releases/download/$DEBUG_TAG/passkeychain-debug.json")
-            conn.setRequestProperty("Cache-Control", "no-cache")
-            lastCode = conn.responseCode
-            body = try {
-                when {
-                    lastCode == 404 || transient(lastCode) -> null
-                    lastCode in 200..299 -> conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-                    else -> throw IOException("Unexpected answer from GitHub (HTTP $lastCode)")
-                }
-            } finally {
-                conn.disconnect()
-            }
-            if (body != null) break
-            if (attempt < RETRIES) Thread.sleep(backoff(attempt))
+        // moment it is missing, so a 404 is tried again before believing it
+        val r = fetch("$REPO/releases/download/$DEBUG_TAG/passkeychain-debug.json", retry404 = true,
+            headers = mapOf("Cache-Control" to "no-cache"))
+        val body = when {
+            r.code in 200..299 -> r.body ?: ""
+            r.code == 404 -> throw IOException("No debug build has been published yet")
+            transient(r.code) -> throw IOException(gitHubTrouble(r.code))
+            else -> throw IOException("Unexpected answer from GitHub (HTTP ${r.code})")
         }
-        if (body == null) throw IOException(
-            if (transient(lastCode)) gitHubTrouble(lastCode) else "No debug build has been published yet",
-        )
         return try {
             val o = JSONObject(body)
             Release(
@@ -112,20 +100,15 @@ class UpdateChecker(private val context: Context) {
      */
     private fun buildInProgress(): Long? {
         return try {
-            val conn = open("$API/actions/runs?branch=main&event=push&per_page=5")
-            conn.setRequestProperty("Accept", "application/vnd.github+json")
-            try {
-                if (conn.responseCode !in 200..299) return null
-                val runs = JSONObject(conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
-                    .getJSONArray("workflow_runs")
-                (0 until runs.length()).map { runs.getJSONObject(it) }
-                    .filter { it.optString("status") != "completed" }
-                    .map { it.getLong("run_number") }
-                    .filter { it > currentBuild }
-                    .maxOrNull()
-            } finally {
-                conn.disconnect()
-            }
+            val r = fetch("$API/actions/runs?branch=main&event=push&per_page=5", attempts = 1,
+                headers = mapOf("Accept" to "application/vnd.github+json"))
+            if (r.code !in 200..299) return null
+            val runs = JSONObject(r.body ?: return null).getJSONArray("workflow_runs")
+            (0 until runs.length()).map { runs.getJSONObject(it) }
+                .filter { it.optString("status") != "completed" }
+                .map { it.getLong("run_number") }
+                .filter { it > currentBuild }
+                .maxOrNull()
         } catch (e: IOException) {
             null
         } catch (e: JSONException) {
@@ -134,21 +117,10 @@ class UpdateChecker(private val context: Context) {
     }
 
     private fun latestRelease(): Release {
-        var attempt = 1
-        while (true) {
-            val code = open("$REPO/releases/latest").apply { instanceFollowRedirects = false }.let { c ->
-                try { c.responseCode } finally { c.disconnect() }
-            }
-            if (!transient(code)) break
-            if (attempt == RETRIES) throw IOException(gitHubTrouble(code))
-            Thread.sleep(backoff(attempt++))
-        }
-        val conn = open("$REPO/releases/latest").apply { instanceFollowRedirects = false }
-        val (code, location) = try {
-            conn.responseCode to conn.getHeaderField("Location")
-        } finally {
-            conn.disconnect()
-        }
+        val r = fetch("$REPO/releases/latest", followRedirects = false)
+        if (transient(r.code)) throw IOException(gitHubTrouble(r.code))
+        val code = r.code
+        val location = r.location
         val tag = location?.let { Regex("/releases/tag/([^/?#]+)").find(it)?.groupValues?.get(1) }
             ?.let { URLDecoder.decode(it, "UTF-8") }
             ?: throw IOException(
@@ -171,19 +143,14 @@ class UpdateChecker(private val context: Context) {
     suspend fun download(release: Release, onProgress: (Int) -> Unit = {}): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
         val out = File(dir, "passkeychain-${release.tag}.apk")
-        var conn = open(release.apkUrl)
-        var attempt = 1
-        while (transient(conn.responseCode) && attempt < RETRIES) {
-            conn.disconnect()
-            Thread.sleep(backoff(attempt++))
-            conn = open(release.apkUrl)
-        }
-        try {
-            if (transient(conn.responseCode)) throw IOException(gitHubTrouble(conn.responseCode))
-            if (conn.responseCode !in 200..299) throw IOException("Download failed (HTTP ${conn.responseCode})")
-            val total = conn.contentLengthLong
+        val response = call(release.apkUrl)
+        response.use { resp ->
+            if (transient(resp.code)) throw IOException(gitHubTrouble(resp.code))
+            if (resp.code !in 200..299) throw IOException("Download failed (HTTP ${resp.code})")
+            val body = resp.body ?: throw IOException("Download failed (empty answer)")
+            val total = body.contentLength()
             var done = 0L
-            conn.inputStream.use { ins ->
+            body.byteStream().use { ins ->
                 out.outputStream().use { os ->
                     val buf = ByteArray(64 * 1024)
                     while (true) {
@@ -196,8 +163,6 @@ class UpdateChecker(private val context: Context) {
                 }
             }
             if (total > 0 && done != total) throw IOException("The download was incomplete. Try again.")
-        } finally {
-            conn.disconnect()
         }
         // Android refuses another signature or package itself; this catches a
         // broken, wrong or stale file early, with a clear message
@@ -225,14 +190,83 @@ class UpdateChecker(private val context: Context) {
         })
     }
 
-    private fun open(url: String): HttpURLConnection =
-        (URL(url).openConnection() as HttpURLConnection).apply {
-            setRequestProperty("User-Agent", "PassKeyChain-Updater")
-            connectTimeout = 15_000
-            readTimeout = 60_000
+    // OkHttp rather than HttpURLConnection: it notices dead pooled connections
+    // instead of hanging on them until "timeout"
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+    private val noRedirects = client.newBuilder().followRedirects(false).build()
+
+    private class Answer(val code: Int, val body: String?, val location: String?)
+
+    /**
+     * GET [url], tried up to [attempts] times while GitHub has trouble: a
+     * server error or 429, a timeout or a broken connection (and a 404 when
+     * [retry404]). The last answer is returned; if the last try did not get
+     * one, the error says why.
+     */
+    private fun fetch(
+        url: String,
+        followRedirects: Boolean = true,
+        headers: Map<String, String> = emptyMap(),
+        retry404: Boolean = false,
+        attempts: Int = RETRIES,
+    ): Answer {
+        var answer: Answer? = null
+        var error: IOException? = null
+        for (attempt in 1..attempts) {
+            try {
+                val request = Request.Builder().url(url).header("User-Agent", USER_AGENT)
+                    .apply { headers.forEach { (k, v) -> header(k, v) } }.build()
+                (if (followRedirects) client else noRedirects).newCall(request).execute().use { r ->
+                    Dbg.d(TAG, "GET $url -> HTTP ${r.code} (try $attempt)")
+                    answer = Answer(r.code, r.body?.string(), r.header("Location"))
+                    error = null
+                }
+                val code = answer!!.code
+                if (!transient(code) && !(retry404 && code == 404)) return answer!!
+            } catch (e: IOException) {
+                Dbg.w(TAG, "GET $url failed (try $attempt): $e")
+                error = e
+            }
+            if (attempt < attempts) Thread.sleep(backoff(attempt))
         }
+        error?.let { throw IOException(unreachable(url, it), it) }
+        return answer!!
+    }
+
+    /** A streaming GET (for the APK), with the same retries before the answer starts. */
+    private fun call(url: String): okhttp3.Response {
+        var error: IOException? = null
+        for (attempt in 1..RETRIES) {
+            try {
+                val r = client.newCall(Request.Builder().url(url).header("User-Agent", USER_AGENT).build()).execute()
+                Dbg.d(TAG, "GET $url -> HTTP ${r.code} (try $attempt)")
+                if (!transient(r.code) || attempt == RETRIES) return r
+                r.close()
+            } catch (e: IOException) {
+                Dbg.w(TAG, "GET $url failed (try $attempt): $e")
+                error = e
+            }
+            if (attempt < RETRIES) Thread.sleep(backoff(attempt))
+        }
+        throw IOException(unreachable(url, error!!), error)
+    }
+
+    private fun unreachable(url: String, e: IOException): String {
+        val host = runCatching { java.net.URI(url).host }.getOrDefault("GitHub")
+        return when (e) {
+            is java.net.SocketTimeoutException -> "$host didn't answer in time (tried $RETRIES times). Check the connection, or try again in a few minutes."
+            is java.net.UnknownHostException -> "Can't find $host: is the phone online?"
+            else -> "Could not reach $host: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
 
     companion object {
+        private const val TAG = "UpdateChecker"
+        private const val USER_AGENT = "PassKeyChain-Updater"
         private const val RETRIES = 4
 
         /** GitHub's own trouble, worth trying again: a server error (502, 503, 504, …) or "too many requests". */

@@ -1,2 +1,3 @@
 - About shows links to the website and the source code
 - Sign-in screen counts the Bluetooth packets sent while the computer looks for the phone
+- Update check uses a sturdier connection and tries again after a timeout
