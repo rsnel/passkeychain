@@ -1089,6 +1089,7 @@ private fun AboutDialog(version: String, onDismiss: () -> Unit) {
 private fun ExportDialog(onDismiss: () -> Unit, onExport: (password: String?) -> Unit, onServer: () -> Unit) {
     var encrypted by remember { mutableStateOf(true) }
     var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var repeat by remember { mutableStateOf("") }
     val problem = when {
         !encrypted -> null
@@ -1120,13 +1121,14 @@ private fun ExportDialog(onDismiss: () -> Unit, onExport: (password: String?) ->
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = password, onValueChange = { password = it }, label = { Text("Password") },
-                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true, visualTransformation = passwordLook(showPassword),
+                        trailingIcon = { ShowPasswordButton(showPassword) { showPassword = !showPassword } },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = repeat, onValueChange = { repeat = it }, label = { Text("Repeat password") },
-                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true, visualTransformation = passwordLook(showPassword),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
                         isError = problem != null && repeat.isNotEmpty(),
                         supportingText = { Text(problem ?: "Bitwarden asks for this password when importing.") },
@@ -1154,6 +1156,7 @@ private fun ExportDialog(onDismiss: () -> Unit, onExport: (password: String?) ->
 @Composable
 private fun ImportPasswordDialog(p: PendingImport, onDismiss: () -> Unit, onDecrypt: (String) -> Unit) {
     var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Lock, null) },
@@ -1164,7 +1167,8 @@ private fun ImportPasswordDialog(p: PendingImport, onDismiss: () -> Unit, onDecr
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = password, onValueChange = { password = it }, label = { Text("Password") },
-                    singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true, visualTransformation = passwordLook(showPassword),
+                    trailingIcon = { ShowPasswordButton(showPassword) { showPassword = !showPassword } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
                     isError = p.error != null,
                     supportingText = if (p.error != null) { { Text(p.error) } } else null,

@@ -62,6 +62,7 @@ fun VaultSyncDialog(
     var server by remember { mutableStateOf(settings.server) }
     var email by remember { mutableStateOf(settings.email) }
     var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<Int>>(emptyList()) } // asked for a second factor
     var provider by remember { mutableStateOf(-1) }
     var code by remember { mutableStateOf("") }
@@ -202,7 +203,8 @@ fun VaultSyncDialog(
                 )
                 OutlinedTextField(
                     password, { password = it }, label = { Text("Master password") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
+                    visualTransformation = passwordLook(showPassword),
+                    trailingIcon = { ShowPasswordButton(showPassword) { showPassword = !showPassword } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                     enabled = busy == null, modifier = Modifier.fillMaxWidth(),
                 )

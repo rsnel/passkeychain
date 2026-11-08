@@ -26,4 +26,6 @@ object AppIcons {
     val Shield: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_shield)
     val SystemUpdate: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_system_update)
     val Tag: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_tag)
+    val Visibility: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_visibility)
+    val VisibilityOff: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ic_visibility_off)
 }

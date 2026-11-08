@@ -4,4 +4,4 @@
 - Clearer message when the computer doesn't pick up the Bluetooth signal
 - Sign-in screen counts the Bluetooth packets sent
 - "Scan QR code" button: it signs in and creates passkeys
-- About links to the website and the source code
+- About links to the website and the source code; show-password buttons
