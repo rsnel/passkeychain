@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The sign-in screen jumps in out of the "Scan sign-in QR" button (bottom right). -->
+<!-- The sign-in screen jumps in out of the "Scan QR code" button (bottom right). -->
 <set xmlns:android="http://schemas.android.com/apk/res/android"
     android:shareInterpolator="false">
     <scale

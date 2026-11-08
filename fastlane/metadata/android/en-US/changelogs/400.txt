@@ -1,3 +1,6 @@
 - About shows links to the website and the source code
 - Sign-in screen counts the Bluetooth packets sent while the computer looks for the phone
 - Update check uses a sturdier connection and tries again after a timeout
+- Pull down to sync now when live sync is on
+- A new passkey goes to your Bitwarden server right away, with a notice
+- The scan button is now "Scan QR code": it signs in and creates passkeys

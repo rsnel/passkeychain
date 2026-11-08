@@ -45,9 +45,12 @@ object LiveSync {
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val running = Mutex()
+    private val lock = Mutex()
     private val _status = MutableStateFlow(Status(Light.Off, "Not set up"))
     val status: StateFlow<Status> = _status
+    private val _running = MutableStateFlow(false)
+    /** Whether a sync is running now (for the pull-to-refresh indicator). */
+    val running: StateFlow<Boolean> = _running
     private const val MIN_INTERVAL_MS = 5 * 60_000L
 
     private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("live_sync", Context.MODE_PRIVATE)
@@ -83,15 +86,19 @@ object LiveSync {
         _status.value = Status(Light.Off, "Not set up")
     }
 
-    /** Runs a sync in the background, unless one ran recently ([force] ignores that). */
-    fun kick(ctx: Context, force: Boolean = false) {
+    /** Runs a sync in the background, unless one ran recently ([force] ignores that). Whether it started one. */
+    fun kick(ctx: Context, force: Boolean = false): Boolean {
         val app = ctx.applicationContext
-        if (!isOn(app)) return
-        if (!force && System.currentTimeMillis() - prefs(app).getLong("time", 0) < MIN_INTERVAL_MS) return
-        scope.launch { run(app) }
+        if (!isOn(app)) return false
+        if (!force && System.currentTimeMillis() - prefs(app).getLong("time", 0) < MIN_INTERVAL_MS) return false
+        _running.value = true
+        scope.launch {
+            try { run(app) } finally { _running.value = lock.isLocked }
+        }
+        return true
     }
 
-    private suspend fun run(ctx: Context) = running.withLock {
+    private suspend fun run(ctx: Context) = lock.withLock {
         val p = prefs(ctx)
         if (!p.getBoolean("on", false)) return@withLock
         val server = p.getString("server", "")!!

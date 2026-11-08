@@ -55,6 +55,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -382,7 +385,7 @@ private fun MainScreen(store: PasskeyStore) {
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                text = { Text("Scan sign-in QR") },
+                text = { Text("Scan QR code") },
                 icon = { Icon(AppIcons.QrCodeScanner, null) },
                 expanded = fabExpanded,
                 onClick = {
@@ -393,11 +396,30 @@ private fun MainScreen(store: PasskeyStore) {
             )
         },
     ) { padding ->
-        when {
-            !loaded -> Box(Modifier.fillMaxSize().padding(padding))
-            passkeys.isEmpty() -> EmptyState(Modifier.padding(padding), onImport = openImport)
-            else -> PasskeyList(passkeys, listState, padding, onClick = { selected = it })
+        val content: @Composable () -> Unit = {
+            when {
+                !loaded -> Box(Modifier.fillMaxSize().padding(padding))
+                passkeys.isEmpty() -> EmptyState(Modifier.padding(padding), onImport = openImport)
+                else -> PasskeyList(passkeys, listState, padding, onClick = { selected = it })
+            }
         }
+        // with live sync on, pulling the list down syncs now
+        if (serverStatus.light != LiveSync.Light.Off) {
+            val syncing by LiveSync.running.collectAsState()
+            val pull = rememberPullToRefreshState()
+            PullToRefreshBox(
+                isRefreshing = syncing,
+                onRefresh = { LiveSync.kick(ctx, force = true) },
+                state = pull,
+                modifier = Modifier.fillMaxSize(),
+                indicator = {
+                    PullToRefreshDefaults.Indicator(
+                        state = pull, isRefreshing = syncing,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = padding.calculateTopPadding()),
+                    )
+                },
+            ) { content() }
+        } else content()
     }
 
     historyShown?.let { entries ->

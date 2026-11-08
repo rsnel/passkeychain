@@ -375,7 +375,7 @@ class HybridSignInActivity : FragmentActivity() {
                 val qr = runCatching { FidoQr.parse(text) }
                     .onFailure { Dbg.w(TAG, "FIDO QR not readable: ${it.message}") }
                     .getOrNull()
-                if (qr == null) { scanHint = "That sign-in QR code could not be read. Hold the phone steady and keep scanning."; return@addOnSuccessListener }
+                if (qr == null) { scanHint = "That QR code could not be read. Hold the phone steady and keep scanning."; return@addOnSuccessListener }
                 qr.staleness(System.currentTimeMillis() / 1000)?.let { scanHint = it; return@addOnSuccessListener }
                 scanned = true
                 scannedQr = qr
@@ -440,7 +440,12 @@ class HybridSignInActivity : FragmentActivity() {
                         // worth noting only when it was not Google's server
                         transport.usedHost?.takeIf { it != TunnelDomains.hostname(TunnelDomains.GOOGLE) }?.let { "Via $it" } ?: "",
                     )
-                        .also { if (createdPasskey) LiveSync.kick(applicationContext, force = true) }
+                        .also {
+                            // the new passkey goes to the vault right away
+                            if (createdPasskey && LiveSync.kick(applicationContext, force = true)) runOnUiThread {
+                                android.widget.Toast.makeText(applicationContext, "Starting sync with your Bitwarden server…", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     CtapAuthenticator.CTAP2_ERR_CREDENTIAL_EXCLUDED -> record(HistoryEntry.Outcome.Failed, "Already has a passkey on this phone.")
                     CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED -> record(HistoryEntry.Outcome.Denied)
                     CtapAuthenticator.CTAP2_ERR_NO_CREDENTIALS -> record(HistoryEntry.Outcome.Failed, "No passkey for this site.")
@@ -799,10 +804,10 @@ class HybridSignInActivity : FragmentActivity() {
             List(12) { Sparkle(rnd.nextFloat(), 6f + 22f * rnd.nextFloat(), 5f + 6f * rnd.nextFloat(), rnd.nextFloat(), 0.35f + 0.4f * rnd.nextFloat()) }
         }
         val spoken = when (verdict) {
-            Verdict.Verifying -> "Scanned sign-in QR code. Verifying."
+            Verdict.Verifying -> "Scanned QR code. Verifying."
             Verdict.Approved -> if (creating) "Scanned QR code. Approved: the new passkey is saved on this phone."
-                else "Scanned sign-in QR code. Approved: you are signed in on the computer."
-            Verdict.Denied -> "Scanned sign-in QR code. Denied."
+                else "Scanned QR code. Approved: you are signed in on the computer."
+            Verdict.Denied -> "Scanned QR code. Denied."
         }
         Box(Modifier.fillMaxSize().semantics {
             contentDescription = spoken
