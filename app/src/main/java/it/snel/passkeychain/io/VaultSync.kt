@@ -34,7 +34,7 @@ import javax.crypto.spec.PSource
  * login items for passkeys the vault doesn't have, and never changes or
  * deletes an existing item.
  */
-class VaultSync(serverUrl: String, private val http: Http, private val deviceId: String) {
+class VaultSync(serverUrl: String, http: Http, private val deviceId: String) {
 
     /** The few HTTP calls needed; [OkHttpVault] in the app, a fake in tests. */
     interface Http {
@@ -61,6 +61,13 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
         val refreshToken: String?,
     )
 
+    private val http = object : Http {
+        // Vaultwarden logs an error for calls without a client version
+        private fun withClient(h: Map<String, String>) = h + mapOf("Bitwarden-Client-Name" to CLIENT_ID, "Bitwarden-Client-Version" to CLIENT_VERSION)
+        override fun post(url: String, contentType: String, body: String, headers: Map<String, String>) = http.post(url, contentType, body, withClient(headers))
+        override fun get(url: String, headers: Map<String, String>) = http.get(url, withClient(headers))
+    }
+
     val base: String = normalize(serverUrl)
     private val identity = "$base/identity"
     private val api = "$base/api"
@@ -75,6 +82,8 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
         internal val accessToken: String,
         /** To save for the next sync; null if the server gave none. */
         val refreshToken: String?,
+        /** The account id (profile id, else the token's "sub"): new items say they are encrypted for it. */
+        internal val userId: String?,
     )
 
     /** Signs in and fetches the vault; [WrongPassword] if the password doesn't open it. */
@@ -91,7 +100,8 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
         } catch (e: IllegalArgumentException) {
             throw WrongPassword()
         }
-        return Session(vault, userKey, tokens.access, tokens.refresh ?: savedRefreshToken)
+        val userId = profile.ci("id")?.takeIf { it != JSONObject.NULL }?.toString() ?: tokenSubject(tokens.access)
+        return Session(vault, userKey, tokens.access, tokens.refresh ?: savedRefreshToken, userId)
     }
 
     /** Signs in, fetches the vault and decrypts its passkeys. */
@@ -120,7 +130,7 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
         for (group in passkeys.groupBy { it.rpId to it.userName }.values) {
             val item = JSONObject(Bitwarden.export(group)).getJSONArray("items").getJSONObject(0)
             val r = http.post(
-                "$api/ciphers", JSON, newCipher(item, session.userKey).toString(),
+                "$api/ciphers", JSON, newCipher(item, session.userKey, session.userId).toString(),
                 mapOf("Authorization" to "Bearer ${session.accessToken}"),
             )
             if (r.code in 200..299) added += group else failed += "${item.optString("name")}: ${errorMessage(r)}"
@@ -207,6 +217,8 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
 
     companion object {
         const val CLIENT_ID = "mobile"
+        /** The Bitwarden app version whose API this client speaks. */
+        const val CLIENT_VERSION = "2025.10.0"
         const val DEVICE_TYPE = "0" // Android
         const val DEVICE_NAME = "PassKeyChain"
         private const val JSON = "application/json"
@@ -321,7 +333,7 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
         }
 
         /** A Bitwarden export item turned into a new-cipher request: every text field encrypted. */
-        private fun newCipher(item: JSONObject, key: Keys): JSONObject {
+        private fun newCipher(item: JSONObject, key: Keys, userId: String?): JSONObject {
             fun e(v: Any?): Any = if (v == null || v == JSONObject.NULL || v.toString().isEmpty()) JSONObject.NULL
                 else EncString.encrypt(v.toString().toByteArray(Charsets.UTF_8), key)
             val login = item.getJSONObject("login")
@@ -339,6 +351,8 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
                 for (j in 0 until a.length()) uris.put(JSONObject().put("uri", e(a.getJSONObject(j).opt("uri"))).put("match", JSONObject.NULL))
             }
             return JSONObject()
+                // required by Vaultwarden 1.37+ (checked against the signed-in account), accepted by Bitwarden
+                .put("encryptedFor", userId ?: JSONObject.NULL)
                 .put("type", 1)
                 .put("organizationId", JSONObject.NULL)
                 .put("folderId", JSONObject.NULL)
@@ -353,6 +367,11 @@ class VaultSync(serverUrl: String, private val http: Http, private val deviceId:
                     .put("uris", uris)
                     .put("fido2Credentials", credentials))
         }
+
+        /** The "sub" claim of a JWT access token, or null. */
+        private fun tokenSubject(jwt: String): String? = runCatching {
+            JSONObject(String(Base64.getUrlDecoder().decode(jwt.split(".")[1].trimEnd('=')), Charsets.UTF_8)).optString("sub").ifBlank { null }
+        }.getOrNull()
 
         private fun keysOf(b: ByteArray): Keys {
             if (b.size != 64) throw Failure("unexpected key length ${b.size}")

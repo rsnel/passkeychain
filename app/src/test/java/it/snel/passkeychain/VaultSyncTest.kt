@@ -62,6 +62,7 @@ class VaultSyncTest {
             val itemKey = keys(random(64))
             vault = JSONObject()
                 .put("profile", JSONObject()
+                    .put("id", "user-1")
                     .put("key", EncString.encrypt(userKeyBytes, BitwardenEncrypted.stretch(master)))
                     .put("privateKey", EncString.encrypt(rsa.private.encoded, userKey))
                     .put("organizations", JSONArray().put(JSONObject().put("id", "org-1").put("key", orgKeyEnc))))
@@ -114,6 +115,8 @@ class VaultSyncTest {
                     assertEquals("Bearer access-1", headers["Authorization"])
                     val cipher = JSONObject(body)
                     assertEquals(1, cipher.getInt("type"))
+                    // like Vaultwarden 1.37: required, and must be the signed-in account
+                    if (cipher.optString("encryptedFor") != "user-1") return VaultSync.Http.Response(422, """{"message":"missing field `encryptedFor`"}""")
                     vault.getJSONArray("ciphers").put(cipher.put("id", "new-${vault.getJSONArray("ciphers").length()}"))
                     VaultSync.Http.Response(200, cipher.toString())
                 }
@@ -127,6 +130,7 @@ class VaultSyncTest {
 
         override fun get(url: String, headers: Map<String, String>): VaultSync.Http.Response {
             calls += url.substringAfter("https://vault.example.net")
+            assertEquals(VaultSync.CLIENT_VERSION, headers["Bitwarden-Client-Version"])
             assertTrue(headers["Authorization"] == "Bearer access-1" || headers["Authorization"] == "Bearer access-2")
             return VaultSync.Http.Response(200, vault.toString())
         }
