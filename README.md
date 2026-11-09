@@ -195,6 +195,15 @@ app/src/main/java/it/snel/passkeychain/
   ui/         MainActivity + Compose              (UI)
 ```
 
+## Similar project
+
+[fidont](https://github.com/Z1xus/fidont) (GPL-3.0, about a month older) also
+implements the hybrid flow (QR sign-in on a computer). It turns the phone into
+a security key: new keys in StrongBox/TEE that can't be extracted, plus NFC,
+Bluetooth and USB (ESP32 dongle or Linux helper); Android 14+. PassKeyChain
+is about passkeys you already have: import (Bitwarden, Vaultwarden, Credential
+Exchange), use, export and sync; Android 9+.
+
 ## License
 
 PassKeyChain is free software, licensed under the
