@@ -1,8 +1,7 @@
-- With live sync, a new passkey is backed up before the site gets it
 - Fixes crashes on older Android (after scanning, importing from another app)
-- Pull down to sync
+- Pull down to sync; new passkeys go to your Bitwarden server right away
 - Sturdier update check: retries, checks at startup (optional), "Open" after an update works
 - Clearer message when the computer doesn't pick up the Bluetooth signal
-- Counts Bluetooth packets sent; show-password buttons
-- "Scan QR code" button: signs in and creates passkeys
-- About links to the website and source
+- Counts the Bluetooth packets sent; show-password buttons
+- "Scan QR code" button: it signs in and creates passkeys
+- About links to the website and the source code
