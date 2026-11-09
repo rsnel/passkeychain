@@ -296,6 +296,8 @@
     </div>
 
     <p class="note" style="margin-top:22px">This is the FIDO “hybrid” transport, the open protocol that Android phones and iPhones use for this. Because it is open, an independent app can speak it too: PassKeyChain does all eight steps itself, in about 1000 lines of Kotlin, and has signed in to a Microsoft account this way. Passkey sovereignty in practice: your key, your phone, the same front door as everyone else.</p>
+
+    <p class="note">Some websites only accept passkeys that live in the browser or computer itself, such as a password manager extension or Windows Hello. With every sign-in the browser tells the website whether the passkey came from another device, and these websites then refuse a QR sign-in, even when the phone signed correctly. You can spot them when creating a passkey: the browser does not offer a QR code.</p>
   </div>
 </section>
 
