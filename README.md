@@ -112,7 +112,9 @@ The debug app has a grey icon, so the two are easy to tell apart.
   red: no connection) to set it up or see the server's details. It syncs when
   the app opens (at most every 5 minutes), after a passkey is created and on
   request: passkeys new in the vault come to the phone, passkeys created on
-  the phone go to the vault. Nothing is deleted on either side. To work
+  the phone go to the vault. With *Back up first* (on by default) a new
+  passkey is added to the vault before the site receives it; if the server
+  can't be reached, the passkey is not created. Nothing is deleted on either side. To work
   without the master password it keeps the vault key and the server's token,
   encrypted by the Android Keystore; turning it off deletes both. Consider a
   separate Bitwarden account that holds only passkeys: the stored key then

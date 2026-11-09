@@ -121,6 +121,18 @@ class MakeCredentialTest {
         assertTrue(creator.stored.isEmpty())
     }
 
+    @Test fun aFailedBackupMeansTheSiteGetsNoPasskey() {
+        // the store refuses (e.g. the vault can't be reached): the answer is "denied",
+        // not an attestation, so the site never registers a key that isn't backed up
+        val creator = object : CtapAuthenticator.Creator {
+            override fun approve(request: CtapAuthenticator.MakeCredentialRequest) = CreateDecision.Create
+            override fun store(passkey: Passkey) { throw CtapAuthenticator.StoreRefused("server unreachable") }
+        }
+        val resp = CtapAuthenticator.handle(request(), creator, noChoice())
+        assertEquals(CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED, status(resp))
+        assertEquals(1, resp.size)
+    }
+
     @Test fun whichRequestsEndTheExchange() {
         assertTrue(CtapAuthenticator.isFinal(request(), canCreate = true))
         assertTrue(!CtapAuthenticator.isFinal(request(rpId = ".dummy"), canCreate = true))

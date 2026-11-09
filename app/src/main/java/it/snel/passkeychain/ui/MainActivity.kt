@@ -235,6 +235,7 @@ private fun MainScreen(store: PasskeyStore) {
         }
     }
     var liveSetup by remember { mutableStateOf(false) }
+    var backupFirst by remember { mutableStateOf(LiveSync.backupFirst(ctx) || !LiveSync.isOn(ctx)) }
     remember { LiveSync.init(ctx) }
     val serverStatus by LiveSync.status.collectAsState()
     // a sync may have added passkeys: show them
@@ -573,6 +574,8 @@ private fun MainScreen(store: PasskeyStore) {
         collections = remember(serverStatus.time) { LiveSync.collections(ctx) },
         target = remember(serverStatus) { LiveSync.target(ctx) },
         onTarget = { LiveSync.setTarget(ctx, it) },
+        backupFirst = backupFirst,
+        onBackupFirst = { backupFirst = it; LiveSync.setBackupFirst(ctx, it) },
     )
     if (liveSetup) VaultSyncDialog(VaultSettings(ctx), onDismiss = { liveSetup = false }, onSynced = { _, _, _ -> }, live = true)
     if (vaultExport) VaultSyncDialog(

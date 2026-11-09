@@ -94,9 +94,15 @@ object CtapAuthenticator {
     interface Creator {
         /** Called when the request arrives; may block until the user has decided. */
         fun approve(request: MakeCredentialRequest): CreateDecision
-        /** Saves the new passkey. Called before the answer goes out; throw to abort. */
+        /**
+         * Saves the new passkey. Called before the answer goes out; throw
+         * [StoreRefused] to abort (the site then hears "denied").
+         */
         fun store(passkey: Passkey)
     }
+
+    /** The new passkey could not be kept safely (e.g. not backed up): it is not created. */
+    class StoreRefused(message: String) : Exception(message)
 
     /**
      * Answers one CTAP2 command (command byte + CBOR parameters). Nothing is
@@ -157,7 +163,11 @@ object CtapAuthenticator {
         return when (creator.approve(request)) {
             CreateDecision.Create -> {
                 val (passkey, publicKey) = newPasskey(request)
-                creator.store(passkey) // saved before the site learns about it
+                try {
+                    creator.store(passkey) // saved (and backed up, if asked) before the site learns about it
+                } catch (e: StoreRefused) {
+                    return byteArrayOf(CTAP2_ERR_OPERATION_DENIED.toByte())
+                }
                 byteArrayOf(CTAP2_OK.toByte()) + attestation(passkey, publicKey)
             }
             CreateDecision.Excluded -> byteArrayOf(CTAP2_ERR_CREDENTIAL_EXCLUDED.toByte())

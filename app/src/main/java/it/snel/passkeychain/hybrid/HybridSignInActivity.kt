@@ -214,6 +214,9 @@ class HybridSignInActivity : FragmentActivity() {
     @Volatile private var requestedRp: String? = null
     @Volatile private var signedWith: Passkey? = null
     @Volatile private var createdPasskey = false
+    @Volatile private var backedUpFirst = false
+    @Volatile private var backupProblem: String? = null
+    private var backingUpTo by mutableStateOf<String?>(null)
     /** The worker thread waits on this for the user's decision about a new passkey. */
     @Volatile private var pendingCreate: CompletableFuture<CreateDecision>? = null
 
@@ -235,8 +238,26 @@ class HybridSignInActivity : FragmentActivity() {
         }
 
         override fun store(passkey: Passkey) {
-            PasskeyStore(applicationContext).upsert(passkey)
+            val store = PasskeyStore(applicationContext)
+            store.upsert(passkey)
             signedWith = passkey
+            if (LiveSync.backupFirst(applicationContext)) {
+                // into the vault before the site learns about it: never an account
+                // whose only passkey lives on this phone alone
+                val host = LiveSync.host(applicationContext)
+                runOnUiThread { backingUpTo = host }
+                val problem = LiveSync.backupNow(applicationContext, passkey)
+                runOnUiThread { backingUpTo = null }
+                if (problem != null) {
+                    store.delete(passkey.credentialId, passkey.rpId)
+                    val message = "Couldn't back up the new passkey to $host ($problem), so it was not created. " +
+                        "Try again, or switch off \"Back up first\" in the server status."
+                    backupProblem = message
+                    set(Step.Send, State.Failed(message))
+                    throw CtapAuthenticator.StoreRefused(message)
+                }
+                backedUpFirst = true
+            }
             createdPasskey = true
         }
     }
@@ -442,12 +463,13 @@ class HybridSignInActivity : FragmentActivity() {
                     )
                         .also {
                             // the new passkey goes to the vault right away
-                            if (createdPasskey && LiveSync.kick(applicationContext, force = true)) runOnUiThread {
+                            if (createdPasskey && !backedUpFirst && LiveSync.kick(applicationContext, force = true)) runOnUiThread {
                                 android.widget.Toast.makeText(applicationContext, "Starting sync with your Bitwarden server…", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }
                     CtapAuthenticator.CTAP2_ERR_CREDENTIAL_EXCLUDED -> record(HistoryEntry.Outcome.Failed, "Already has a passkey on this phone.")
-                    CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED -> record(HistoryEntry.Outcome.Denied)
+                    CtapAuthenticator.CTAP2_ERR_OPERATION_DENIED ->
+                        backupProblem?.let { record(HistoryEntry.Outcome.Failed, it) } ?: record(HistoryEntry.Outcome.Denied)
                     CtapAuthenticator.CTAP2_ERR_NO_CREDENTIALS -> record(HistoryEntry.Outcome.Failed, "No passkey for this site.")
                     else -> record(HistoryEntry.Outcome.Failed, "CTAP error 0x%02x".format(response[0]))
                 }
@@ -713,7 +735,7 @@ class HybridSignInActivity : FragmentActivity() {
         Step.Approve ->
             if (creating) signDetail?.let { "For $it: unlock to approve." } ?: "Confirm and unlock."
             else signDetail?.let { "As $it: unlock to approve." } ?: "Choose a passkey and unlock."
-        Step.Send -> "Sending it to the computer."
+        Step.Send -> backingUpTo?.let { "Backing the new passkey up to $it first…" } ?: "Sending it to the computer."
     }
 
     @Composable

@@ -200,6 +200,53 @@ object LiveSync {
         _status.value = _status.value.let { Status(it.light, it.message, it.time, it.stats + ("New passkeys go to" to (c?.label ?: "this account's vault"))) }
     }
 
+    /** Whether a new passkey is added to the vault before the site gets it (on by default). */
+    fun backupFirst(ctx: Context) = isOn(ctx) && prefs(ctx).getBoolean("backup_first", true)
+
+    fun setBackupFirst(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("backup_first", on).apply()
+
+    /** The server's host name, for messages. */
+    fun host(ctx: Context): String = prefs(ctx).getString("server", "")!!.let { runCatching { java.net.URI(it).host }.getOrDefault(it) }
+
+    /**
+     * Adds a just-created [passkey] to the vault now, blocking (on a worker
+     * thread), so it is safe before the site learns about it. Null when it is
+     * in the vault, else why not.
+     */
+    fun backupNow(ctx: Context, passkey: it.snel.passkeychain.model.Passkey): String? = kotlinx.coroutines.runBlocking {
+        lock.withLock {
+            val p = prefs(ctx)
+            try {
+                kotlinx.coroutines.withTimeout(45_000) {
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        val token = p.getString("token", null)?.let { String(unseal(it)) } ?: throw VaultSync.NeedsSignIn("Sign in to the server again.")
+                        val key = unseal(p.getString("key", null) ?: throw VaultSync.NeedsSignIn("Sign in to the server again."))
+                        val vault = VaultSync(p.getString("server", "")!!, OkHttpVault(), VaultSettings(ctx).deviceId)
+                        val session = vault.openWithKey(token, key)
+                        session.refreshToken?.let { p.edit().putString("token", seal(it.toByteArray())).apply() }
+                        val target = p.getString("target", null)?.let { id ->
+                            vault.collections(session).firstOrNull { it.id == id } ?: throw VaultSync.Failure("The chosen collection is gone.")
+                        }
+                        val up = vault.upload(session, listOf(passkey), into = target)
+                        if (up.added.isEmpty()) throw VaultSync.Failure(up.failed.firstOrNull() ?: "the server didn't take it")
+                        // backed up: mark it, and remember the vault has it
+                        val store = PasskeyStore(ctx)
+                        store.save(store.load().map { if (it.credentialId == passkey.credentialId) it.copy(backedUp = true) else it })
+                        val known = JSONArray(p.getString("known", "[]")).put(passkey.credentialId)
+                        p.edit().putString("known", known.toString()).apply()
+                        SignInHistory(ctx).add(HistoryEntry.change(HistoryEntry.Outcome.Exported, account = "to ${host(ctx)} (live sync)",
+                            detail = "1 passkey added to the vault before the site got it"))
+                    }
+                }
+                null
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                "the server didn't answer in time"
+            } catch (e: Exception) {
+                e.message ?: e.javaClass.simpleName
+            }
+        }
+    }
+
     private fun count(n: Int) = if (n == 1) "1 passkey" else "$n passkeys"
 
     private fun seal(b: ByteArray) = Base64.getEncoder().encodeToString(KeystoreCrypto.encrypt(b))

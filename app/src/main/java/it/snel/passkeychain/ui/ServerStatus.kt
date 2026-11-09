@@ -35,6 +35,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -85,6 +86,8 @@ fun ServerSheet(
     collections: List<VaultSync.Collection> = emptyList(),
     target: VaultSync.Collection? = null,
     onTarget: (VaultSync.Collection?) -> Unit = {},
+    backupFirst: Boolean = true,
+    onBackupFirst: (Boolean) -> Unit = {},
 ) {
     var choosing by remember { mutableStateOf(false) }
     if (choosing) AlertDialog(
@@ -151,6 +154,17 @@ fun ServerSheet(
                     "Red: the server can't be reached. It syncs when the app opens (at most every 5 minutes) and after you create a passkey.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Back up first", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "A new passkey goes to the vault before the site gets it. If the server can't be reached, it isn't created.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = backupFirst, onCheckedChange = onBackupFirst)
+            }
             OutlinedButton(onClick = { choosing = true }, modifier = Modifier.fillMaxWidth()) {
                 Text("New passkeys go to: " + (target?.label ?: "this account's vault"))
             }
